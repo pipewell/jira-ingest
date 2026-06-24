@@ -23,18 +23,22 @@ def make_settings(**overrides: object) -> Settings:
 class TestModeValidation:
     def test_cloud_requires_email(self) -> None:
         with pytest.raises(ValidationError, match="JIRA_EMAIL"):
-            Settings.model_validate({
-                "url": "https://jira.example.com",
-                "api_token": "secret",
-                "mode": "cloud",
-            })
+            Settings.model_validate(
+                {
+                    "url": "https://jira.example.com",
+                    "api_token": "secret",
+                    "mode": "cloud",
+                }
+            )
 
     def test_dc_without_email_is_valid(self) -> None:
-        s = Settings.model_validate({
-            "url": "https://jira.example.com",
-            "api_token": "secret",
-            "mode": "dc",
-        })
+        s = Settings.model_validate(
+            {
+                "url": "https://jira.example.com",
+                "api_token": "secret",
+                "mode": "dc",
+            }
+        )
         assert s.mode == "dc"
         assert s.email is None
 
@@ -81,25 +85,30 @@ class TestPemResolution:
     def test_valid_pem_writes_temp_file(self, tmp_path: object) -> None:
         fake_pem = b"-----BEGIN CERTIFICATE-----\nMIIBIjANBg==\n-----END CERTIFICATE-----\n"
         encoded = base64.b64encode(fake_pem).decode()
-        s = Settings.model_validate({
-            "url": "https://jira.example.com",
-            "api_token": "secret",
-            "mode": "dc",
-            "cert_pem": encoded,
-        })
+        s = Settings.model_validate(
+            {
+                "url": "https://jira.example.com",
+                "api_token": "secret",
+                "mode": "dc",
+                "cert_pem": encoded,
+            }
+        )
         path = s.resolve_pem_path()
         assert path is not None
         import os
+
         assert os.path.exists(path)
         with open(path, "rb") as f:
             assert f.read() == fake_pem
 
     def test_invalid_base64_raises(self) -> None:
-        s = Settings.model_validate({
-            "url": "https://jira.example.com",
-            "api_token": "secret",
-            "mode": "dc",
-            "cert_pem": "not-valid-base64!!!",
-        })
+        s = Settings.model_validate(
+            {
+                "url": "https://jira.example.com",
+                "api_token": "secret",
+                "mode": "dc",
+                "cert_pem": "not-valid-base64!!!",
+            }
+        )
         with pytest.raises(ValueError, match="JIRA_CERT_PEM"):
             s.resolve_pem_path()

@@ -12,22 +12,26 @@ from jira_ingest.config import Settings
 
 
 def cloud_settings(**overrides: object) -> Settings:
-    return Settings.model_validate({
-        "url": "https://jira.example.com",
-        "api_token": "mytoken",
-        "mode": "cloud",
-        "email": "user@example.com",
-        **overrides,
-    })
+    return Settings.model_validate(
+        {
+            "url": "https://jira.example.com",
+            "api_token": "mytoken",
+            "mode": "cloud",
+            "email": "user@example.com",
+            **overrides,
+        }
+    )
 
 
 def dc_settings(**overrides: object) -> Settings:
-    return Settings.model_validate({
-        "url": "https://jira.internal.com",
-        "api_token": "dctoken",
-        "mode": "dc",
-        **overrides,
-    })
+    return Settings.model_validate(
+        {
+            "url": "https://jira.internal.com",
+            "api_token": "dctoken",
+            "mode": "dc",
+            **overrides,
+        }
+    )
 
 
 class TestHeaders:
@@ -59,9 +63,11 @@ class TestPagination:
     async def test_single_page(self) -> None:
         s = cloud_settings()
         async with JiraClient(s) as client:
-            with patch.object(client, "get", new=AsyncMock(
-                return_value=self._make_page([{"id": 1}, {"id": 2}], total=2)
-            )):
+            with patch.object(
+                client,
+                "get",
+                new=AsyncMock(return_value=self._make_page([{"id": 1}, {"id": 2}], total=2)),
+            ):
                 results = await client.get_paginated("/rest/api/2/search", "issues")
         assert len(results) == 2
 
@@ -93,9 +99,11 @@ class TestPagination:
         s = cloud_settings()
 
         async with JiraClient(s) as client:
-            with patch.object(client, "get", new=AsyncMock(
-                return_value={"values": [{"id": "board-1"}], "isLast": True}
-            )):
+            with patch.object(
+                client,
+                "get",
+                new=AsyncMock(return_value={"values": [{"id": "board-1"}], "isLast": True}),
+            ):
                 results = await client.get_paginated("/rest/agile/1.0/board", "values")
 
         assert len(results) == 1

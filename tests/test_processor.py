@@ -45,9 +45,7 @@ class TestExtractIssue:
     def test_custom_field_scalar(self) -> None:
         issue = make_issue()
         issue["fields"]["customfield_10001"] = "Platform"
-        rec, _ = _extract_issue(
-            issue, issue["fields"], _project(), {"team": "customfield_10001"}
-        )
+        rec, _ = _extract_issue(issue, issue["fields"], _project(), {"team": "customfield_10001"})
         assert rec is not None
         assert rec["custom_fields"]["team"] == "Platform"
 

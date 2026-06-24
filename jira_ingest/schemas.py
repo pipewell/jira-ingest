@@ -95,8 +95,12 @@ class IssueRecord(BaseModel):
         return None
 
     @field_validator(
-        "parent_task_id", "epic_id", "status_id", "issuetype_id",
-        "priority_id", "status_category_id",
+        "parent_task_id",
+        "epic_id",
+        "status_id",
+        "issuetype_id",
+        "priority_id",
+        "status_category_id",
         mode="before",
     )
     @classmethod

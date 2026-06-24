@@ -30,6 +30,7 @@ async def fetch_project_details(client: JiraClient, project_self_url: str) -> di
     """Fetch full project details (includes versions/releases and lead) via self URL."""
     # The self URL is absolute; extract the path portion
     from urllib.parse import urlparse
+
     path = urlparse(project_self_url).path
     return await client.get(path)
 

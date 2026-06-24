@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     # ── Connection ─────────────────────────────────────────────────────────────
     url: str
     api_token: str
-    email: str | None = None          # Cloud only
-    cert_pem: str | None = None       # DC only: base64-encoded PEM
+    email: str | None = None  # Cloud only
+    cert_pem: str | None = None  # DC only: base64-encoded PEM
 
     # ── Scope ──────────────────────────────────────────────────────────────────
     project_keys: list[str] = []

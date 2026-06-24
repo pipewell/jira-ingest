@@ -276,9 +276,7 @@ def _extract_transitions(
                 from_str = hash_pii(
                     safe_str(change.get("fromString")), safe_str(change.get("from", ""))
                 )
-                to_str = hash_pii(
-                    safe_str(change.get("toString")), safe_str(change.get("to", ""))
-                )
+                to_str = hash_pii(safe_str(change.get("toString")), safe_str(change.get("to", "")))
                 from_id = to_id = ""
             else:
                 from_id = safe_str(change.get("from"))
