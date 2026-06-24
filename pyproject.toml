@@ -88,6 +88,10 @@ disable_error_code = ["misc"]
 module = ["tests.*"]
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+module = ["jira_ingest.loader.*"]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

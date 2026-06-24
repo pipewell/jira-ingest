@@ -46,14 +46,6 @@ class Settings(BaseSettings):
     # Stored as a JSON string in env; parsed to dict at validation time.
     sink_options: dict[str, Any] = {}
 
-    # ── Redshift ───────────────────────────────────────────────────────────────
-    # These live outside the JIRA_ prefix so they share a common convention
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
     # ── Tuning ─────────────────────────────────────────────────────────────────
     max_concurrent_requests: int = 10
     request_timeout_seconds: int = 120

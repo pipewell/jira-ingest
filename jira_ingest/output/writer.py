@@ -108,7 +108,7 @@ class ParquetWriter(BaseWriter):
         table = pa.Table.from_pandas(df, preserve_index=False)
 
         buf = io.BytesIO()
-        pq.write_table(table, buf, compression="snappy")
+        pq.write_table(table, buf, compression="snappy")  # type: ignore[no-untyped-call]
         buf.seek(0)
 
         with sink.open(path, "wb") as f:

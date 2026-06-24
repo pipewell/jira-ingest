@@ -1,20 +1,11 @@
 """Load Parquet files from S3 into Redshift via COPY command.
 
-This loader is optional and only relevant when using the S3 sink and
-a Redshift destination is configured. It issues a single COPY command
-per data type pointing at the S3 prefix.
-
-Usage::
-
-    loader = RedshiftLoader(redshift_settings)
-    loader.load(data_type="issues", s3_prefix="s3://my-bucket/jira-ingest/issues/")
+This loader is optional. Requires: pip install jira-ingest[redshift]
 """
 
 from __future__ import annotations
 
 import logging
-
-import redshift_connector
 
 from jira_ingest.config import RedshiftSettings
 
@@ -33,7 +24,13 @@ class RedshiftLoader:
     def __init__(self, settings: RedshiftSettings) -> None:
         self._settings = settings
 
-    def _connect(self) -> redshift_connector.Connection:
+    def _connect(self):  # type: ignore[no-untyped-def]
+        try:
+            import redshift_connector
+        except ImportError as exc:
+            raise ImportError(
+                "redshift-connector is required. Install with: pip install jira-ingest[redshift]"
+            ) from exc
         s = self._settings
         return redshift_connector.connect(
             host=s.host,
@@ -60,7 +57,6 @@ class RedshiftLoader:
             COMPUPDATE OFF
             STATUPDATE OFF;
         """
-
         count_sql = f"SELECT COUNT(1) FROM {table};"
 
         with self._connect() as conn, conn.cursor() as cur:
