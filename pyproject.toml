@@ -53,6 +53,9 @@ dev = [
 [project.scripts]
 jira-ingest = "jira_ingest.cli:cli"
 
+[tool.hatch.build.targets.wheel]
+packages = ["jira_ingest"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
