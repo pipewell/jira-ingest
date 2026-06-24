@@ -43,7 +43,7 @@ def run(
     load_redshift: bool,
 ) -> None:
     """Fetch all Jira data and write to the configured sink."""
-    settings = Settings(_env_file=env_file)
+    settings = Settings(_env_file=env_file)  # type: ignore[call-arg]
     configure_logging(settings.log_level)
 
     suffix = date_suffix or datetime.utcnow().strftime("%Y%m%d")
@@ -103,7 +103,7 @@ def _run_redshift_load(settings: Settings, date_suffix: str) -> None:
 def validate(env_file: str) -> None:
     """Validate config and connectivity without ingesting data."""
     try:
-        settings = Settings(_env_file=env_file)
+        settings = Settings(_env_file=env_file)  # type: ignore[call-arg]
     except Exception as exc:
         click.echo(f"Config error: {exc}", err=True)
         sys.exit(1)

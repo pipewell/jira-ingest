@@ -32,7 +32,8 @@ async def fetch_project_details(client: JiraClient, project_self_url: str) -> di
     from urllib.parse import urlparse
 
     path = urlparse(project_self_url).path
-    return await client.get(path)
+    result: dict[str, Any] = await client.get(path)
+    return result
 
 
 # ── Boards ────────────────────────────────────────────────────────────────────

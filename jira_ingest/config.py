@@ -74,14 +74,15 @@ class Settings(BaseSettings):
     def parse_project_keys(cls, v: Any) -> list[str]:
         if isinstance(v, str):
             return [k.strip() for k in v.split(",") if k.strip()]
-        return v
+        return list(v) if v else []
 
     @field_validator("custom_fields", "sink_options", mode="before")
     @classmethod
     def parse_json_dict(cls, v: Any) -> dict[str, Any]:
         if isinstance(v, str):
-            return json.loads(v)
-        return v or {}
+            parsed: dict[str, Any] = json.loads(v)
+            return parsed
+        return dict(v) if v else {}
 
     @model_validator(mode="after")
     def validate_mode_credentials(self) -> Settings:
