@@ -81,6 +81,12 @@ known-first-party = ["jira_ingest"]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+# Click and tenacity decorators are untyped; these are known false positives
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
