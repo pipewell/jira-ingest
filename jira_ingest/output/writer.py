@@ -41,8 +41,7 @@ class BaseWriter(ABC):
         records: list[dict[str, Any]],
         sink: Sink,
         date_suffix: str,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def _path(self, data_type: str, date_suffix: str, extension: str) -> str:
         return f"{data_type}/{data_type}_{date_suffix}.{extension}"
