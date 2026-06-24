@@ -10,7 +10,7 @@ from datetime import datetime
 import click
 
 from jira_ingest.client import create_client
-from jira_ingest.config import RedshiftSettings, Settings
+from jira_ingest.config import Settings
 from jira_ingest.output.sink import Sink
 from jira_ingest.output.writer import create_writer
 from jira_ingest.processor import stream_all
@@ -30,17 +30,31 @@ def cli() -> None:
 @click.option("--end-date", default=None, help="Filter issues until date (YYYY-MM-DD)")
 @click.option("--date-suffix", default=None, help="Output file date suffix (default: today)")
 @click.option(
-    "--load-redshift",
-    is_flag=True,
-    default=False,
-    help="Load output into Redshift after writing (requires S3 sink and Redshift config)",
+    "--database-url",
+    default=None,
+    help="SQLAlchemy URL to load records into a database after writing files",
+    envvar="DATABASE_URL",
+)
+@click.option(
+    "--db-schema",
+    default=None,
+    help="Target database schema (used with --database-url)",
+    envvar="DATABASE_SCHEMA",
+)
+@click.option(
+    "--redshift-iam-role",
+    default="",
+    help="IAM role ARN for Redshift S3 COPY (used with --database-url on Redshift)",
+    envvar="REDSHIFT_IAM_ROLE",
 )
 def run(
     env_file: str,
     start_date: str | None,
     end_date: str | None,
     date_suffix: str | None,
-    load_redshift: bool,
+    database_url: str | None,
+    db_schema: str | None,
+    redshift_iam_role: str,
 ) -> None:
     """Fetch all Jira data and write to the configured sink."""
     settings = Settings(_env_file=env_file)  # type: ignore[call-arg]
@@ -57,6 +71,9 @@ def run(
         settings.sink_uri,
     )
 
+    # Accumulate all records so we can pass them to the database loader in one go
+    all_records: dict[str, list[dict[str, object]]] = {}
+
     async def _run() -> dict[str, int]:
         counts: dict[str, int] = {}
         async with create_client(settings) as client:
@@ -68,6 +85,7 @@ def run(
             ):
                 writer.write(data_type, records, sink, suffix)
                 counts[data_type] = counts.get(data_type, 0) + len(records)
+                all_records.setdefault(data_type, []).extend(records)
         return counts
 
     counts = asyncio.run(_run())
@@ -75,27 +93,32 @@ def run(
     for data_type, n in sorted(counts.items()):
         click.echo(f"  {data_type}: {n:,} records")
 
-    if load_redshift:
-        if not settings.sink_uri.startswith("s3://"):
-            click.echo("--load-redshift requires an S3 sink URI (s3://...)", err=True)
-            sys.exit(1)
-        _run_redshift_load(settings, suffix)
+    if database_url:
+        _load_database(database_url, db_schema, redshift_iam_role, all_records, settings, suffix)
 
 
-def _run_redshift_load(settings: Settings, date_suffix: str) -> None:
+def _load_database(
+    database_url: str,
+    schema: str | None,
+    iam_role: str,
+    records: dict[str, list[dict[str, object]]],
+    settings: Settings,
+    date_suffix: str,
+) -> None:
+    from jira_ingest.loader import create_loader
     from jira_ingest.loader.redshift import RedshiftLoader
 
-    rs = RedshiftSettings()
-    if not rs.is_configured():
-        click.echo(
-            "Redshift not configured. Set REDSHIFT_HOST, DATABASE, USER, PASSWORD.", err=True
-        )
-        sys.exit(1)
+    loader = create_loader(database_url, schema=schema, iam_role=iam_role)
+    loader.ensure_tables()
 
-    loader = RedshiftLoader(rs)
-    counts = loader.load_all(settings.sink_uri, date_suffix)
-    for table, n in counts.items():
-        click.echo(f"  Redshift {table}: {n:,} rows")
+    # Redshift + S3 sink: use the fast COPY path instead of row-by-row insert
+    if isinstance(loader, RedshiftLoader) and settings.sink_uri.startswith("s3://"):
+        click.echo("Redshift detected with S3 sink -- using COPY fast path")
+        loader.load_all_from_s3(settings.sink_uri, date_suffix)
+    else:
+        db_counts = loader.load_all(records)
+        for table, n in db_counts.items():
+            click.echo(f"  DB {table}: {n:,} rows")
 
 
 @cli.command()

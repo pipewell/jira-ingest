@@ -1,79 +1,78 @@
-"""Load Parquet files from S3 into Redshift via COPY command.
+"""Redshift loader with S3 COPY fast path.
 
-This loader is optional. Requires: pip install jira-ingest[redshift]
+Extends ``SQLAlchemyLoader`` with ``load_from_s3``, which issues a Redshift
+COPY command directly from an S3 prefix.  Use this when the pipeline has
+already written Parquet files to S3 and you want to avoid re-streaming
+records through Python.
+
+For row-by-row loads (e.g. small datasets or non-S3 sinks) just call the
+inherited ``load(data_type, records)`` method instead -- it uses the standard
+PostgreSQL ON CONFLICT DO NOTHING path, which Redshift supports.
 """
 
 from __future__ import annotations
 
 import logging
 
-from jira_ingest.config import RedshiftSettings
+from sqlalchemy import text
+
+from jira_ingest.loader.sqlalchemy_loader import SQLAlchemyLoader
+from jira_ingest.loader.tables import TABLE_NAMES
 
 logger = logging.getLogger(__name__)
 
-_TABLES: dict[str, str] = {
-    "projects": "jira_projects",
-    "releases": "jira_releases",
-    "boards": "jira_boards",
-    "issues": "jira_issues",
-    "transitions": "jira_transitions",
-}
 
+class RedshiftLoader(SQLAlchemyLoader):
+    """SQLAlchemy loader with an additional S3 COPY fast path for Redshift.
 
-class RedshiftLoader:
-    def __init__(self, settings: RedshiftSettings) -> None:
-        self._settings = settings
+    Args:
+        database_url: Redshift connection URL, e.g.
+            ``postgresql+psycopg2://user:pass@cluster.redshift.amazonaws.com:5439/db``
+        iam_role: ARN of the IAM role that has S3 read access, e.g.
+            ``arn:aws:iam::123456789012:role/RedshiftS3ReadRole``.
+        schema: Target schema (default ``"public"``).
+        batch_size: Rows per INSERT batch for the in-memory path.
+    """
 
-    def _connect(self):  # type: ignore[no-untyped-def]
-        try:
-            import redshift_connector
-        except ImportError as exc:
-            raise ImportError(
-                "redshift-connector is required. Install with: pip install jira-ingest[redshift]"
-            ) from exc
-        s = self._settings
-        return redshift_connector.connect(
-            host=s.host,
-            port=s.port,
-            database=s.database,
-            user=s.user,
-            password=s.password,
-        )
+    def __init__(
+        self,
+        database_url: str,
+        iam_role: str = "",
+        schema: str | None = "public",
+        batch_size: int = 500,
+        echo: bool = False,
+    ) -> None:
+        super().__init__(database_url, schema=schema, batch_size=batch_size, echo=echo)
+        self._iam_role = iam_role
 
-    def load(self, data_type: str, s3_prefix: str) -> int:
+    def load_from_s3(self, data_type: str, s3_prefix: str) -> None:
         """COPY all Parquet files under ``s3_prefix`` into the target table.
 
-        Returns the number of rows loaded.
+        This is substantially faster than the in-memory path for large datasets
+        because the data never passes through Python.
         """
-        s = self._settings
-        table = f"{s.schema_name}.{_TABLES.get(data_type, data_type)}"
-        iam_role = s.iam_role or ""
+        table_name = TABLE_NAMES.get(data_type)
+        if not table_name:
+            raise ValueError(f"Unknown data type: {data_type!r}")
 
-        copy_sql = f"""
-            COPY {table}
-            FROM '{s3_prefix}'
-            IAM_ROLE '{iam_role}'
+        schema_prefix = f"{self._schema}." if self._schema else ""
+        qualified = f"{schema_prefix}{table_name}"
+
+        sql = text(f"""
+            COPY {qualified}
+            FROM :s3_prefix
+            IAM_ROLE :iam_role
             FORMAT AS PARQUET
             COMPUPDATE OFF
-            STATUPDATE OFF;
-        """
-        count_sql = f"SELECT COUNT(1) FROM {table};"
+            STATUPDATE OFF
+        """)
 
-        with self._connect() as conn, conn.cursor() as cur:
-            logger.info("COPY into %s from %s", table, s3_prefix)
-            cur.execute(copy_sql)
-            cur.execute(count_sql)
-            result = cur.fetchone()
-            row_count: int = result[0] if result else 0
-            conn.commit()
+        with self._engine.begin() as conn:
+            logger.info("COPY %s <- %s", qualified, s3_prefix)
+            conn.execute(sql, {"s3_prefix": s3_prefix, "iam_role": self._iam_role})
 
-        logger.info("Loaded %d rows into %s", row_count, table)
-        return row_count
-
-    def load_all(self, s3_sink_uri: str, date_suffix: str) -> dict[str, int]:
-        """Load all data types from ``s3_sink_uri`` for a given date suffix."""
-        counts: dict[str, int] = {}
-        for data_type in _TABLES:
+    def load_all_from_s3(self, s3_sink_uri: str, date_suffix: str) -> None:
+        """COPY all data types from an S3 sink for a given date suffix."""
+        for data_type in TABLE_NAMES:
             prefix = f"{s3_sink_uri.rstrip('/')}/{data_type}/{data_type}_{date_suffix}.parquet"
-            counts[data_type] = self.load(data_type, prefix)
-        return counts
+            self.load_from_s3(data_type, prefix)
