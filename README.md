@@ -1,5 +1,9 @@
 # jira-ingest
 
+[![PyPI version](https://img.shields.io/pypi/v/pipewell-jira-ingest.svg)](https://pypi.org/project/pipewell-jira-ingest/)
+[![Python versions](https://img.shields.io/pypi/pyversions/pipewell-jira-ingest.svg)](https://pypi.org/project/pipewell-jira-ingest/)
+[![Licence: MIT](https://img.shields.io/badge/Licence-MIT-blue.svg)](LICENSE)
+
 Async Jira data pipeline for Data Center and Cloud. Fetches projects, releases, boards, issues, and transitions; writes Parquet, CSV, or JSON Lines to local disk, S3, Azure Blob, or GCS; and optionally loads records into any SQLAlchemy-compatible database.
 
 ## Features
@@ -18,10 +22,17 @@ Async Jira data pipeline for Data Center and Cloud. Fetches projects, releases, 
 ## Quick start
 
 ```bash
-pip install -e ".[dev]"
+pip install pipewell-jira-ingest
 cp .env.example .env   # edit with your Jira URL and credentials
 jira-ingest validate   # confirm connectivity
 jira-ingest run        # fetch everything and write to ./output
+```
+
+For database loading, install the optional extra:
+
+```bash
+pip install "pipewell-jira-ingest[database]"   # PostgreSQL, SQLite, etc.
+pip install "pipewell-jira-ingest[redshift]"   # Redshift with S3 COPY fast path
 ```
 
 ## Documentation
