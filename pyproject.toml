@@ -3,11 +3,24 @@ requires = ["hatchling>=1.18"]
 build-backend = "hatchling.build"
 
 [project]
-name = "jira-ingest"
-version = "0.1.0"
-description = "Async Jira data pipeline supporting Data Center and Cloud, with pluggable multi-protocol output"
+name = "pipewell-jira-ingest"
+version = "1.0.0"
+description = "Async Jira data pipeline supporting Cloud and Data Center, with pluggable multi-protocol output"
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["jira", "etl", "data-engineering", "asyncio", "sqlalchemy"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+
 dependencies = [
     # HTTP + async
     "aiohttp>=3.9",
@@ -35,6 +48,11 @@ dependencies = [
     # CLI
     "click>=8.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/pipewell/jira-ingest"
+Repository = "https://github.com/pipewell/jira-ingest"
+"Bug Tracker" = "https://github.com/pipewell/jira-ingest/issues"
 
 [project.optional-dependencies]
 database = [
