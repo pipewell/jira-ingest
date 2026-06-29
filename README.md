@@ -39,10 +39,10 @@ pip install "pipewell-jira-ingest[redshift]"   # Redshift with S3 COPY fast path
 
 | Guide | Description |
 |---|---|
-| [Authentication](docs/authentication.md) | Jira Cloud vs Data Center, PAT vs Basic Auth, mTLS certificates, scoping by project |
-| [Output sinks](docs/sinks.md) | Local filesystem, S3, Azure Blob, GCS -- URIs, auth options, output layout |
-| [Database loading](docs/database-loading.md) | PostgreSQL, Redshift S3 COPY, Snowflake, DuckDB, SQLite; programmatic API |
-| [Custom fields](docs/custom-fields.md) | Mapping `customfield_XXXXX` IDs to logical names, finding field IDs |
+| [Authentication](https://github.com/pipewell/jira-ingest/blob/main/docs/authentication.md) | Jira Cloud vs Data Center, PAT vs Basic Auth, mTLS certificates, scoping by project |
+| [Output sinks](https://github.com/pipewell/jira-ingest/blob/main/docs/sinks.md) | Local filesystem, S3, Azure Blob, GCS -- URIs, auth options, output layout |
+| [Database loading](https://github.com/pipewell/jira-ingest/blob/main/docs/database-loading.md) | PostgreSQL, Redshift S3 COPY, Snowflake, DuckDB, SQLite; programmatic API |
+| [Custom fields](https://github.com/pipewell/jira-ingest/blob/main/docs/custom-fields.md) | Mapping `customfield_XXXXX` IDs to logical names, finding field IDs |
 
 ## Configuration reference
 
