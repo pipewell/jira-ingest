@@ -128,7 +128,7 @@ async def _process_project(
             lead_hash=lead_hash,
         )
         yield "projects", [proj_record.model_dump()]
-    except (ValidationError, KeyError) as exc:
+    except (ValidationError, KeyError, ValueError) as exc:
         logger.error("Project validation failed for %s: %s", project.get("key"), exc)
         return
 
@@ -157,8 +157,8 @@ async def _process_project(
     seen_issues: set[str] = set()
 
     for board in boards_raw:
-        board_id = int(board["id"])
         try:
+            board_id = int(board["id"])
             board_rec = BoardRecord(
                 board_id=board_id,
                 project_id=proj_record.id,
@@ -166,8 +166,8 @@ async def _process_project(
                 board_type=board.get("type", ""),
             )
             yield "boards", [board_rec.model_dump()]
-        except ValidationError as exc:
-            logger.debug("Skipping board %d: %s", board_id, exc)
+        except (ValidationError, KeyError, ValueError) as exc:
+            logger.debug("Skipping board %s: %s", board.get("id"), exc)
             continue
 
         issues_raw = await fetch_issues_for_board(client, board_id, start_date, end_date)
@@ -266,6 +266,9 @@ def _extract_transitions(
         hashed = hash_pii(safe_str(author.get("displayName")), safe_str(account_id))
         created = history.get("created")
         transition_id = safe_int(history.get("id"))
+        if transition_id is None:
+            logger.debug("Skipping changelog history with missing id for issue %s", issue_key)
+            continue
 
         for change in history.get("items", []):
             field = change.get("field")
@@ -286,7 +289,7 @@ def _extract_transitions(
 
             try:
                 rec = TransitionRecord(
-                    transition_id=transition_id or 0,
+                    transition_id=transition_id,
                     transition_field=field,
                     transition_field_type=change.get("fieldtype", ""),
                     issue_id=issue_id,

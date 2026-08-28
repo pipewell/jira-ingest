@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from jira_ingest.processor import _extract_issue, _extract_transitions
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from jira_ingest.config import Settings
+from jira_ingest.processor import _extract_issue, _extract_transitions, _process_project
 from jira_ingest.schemas import ProjectRecord
-from tests.conftest import make_issue
+from tests.conftest import make_board, make_issue, make_project, make_project_details
 
 
 def _project() -> ProjectRecord:
@@ -133,3 +138,70 @@ class TestExtractTransitions:
         issue = make_issue(transitions=[])
         transitions = _extract_transitions(issue, 1001, "PROJ-1")
         assert transitions == []
+
+    def test_missing_history_id_is_skipped_not_zeroed(self) -> None:
+        history = [
+            {
+                "created": "2024-02-01T10:00:00.000+0000",
+                "author": {"displayName": "Dan", "key": "dan"},
+                "items": [
+                    {
+                        "field": "status",
+                        "fieldtype": "jira",
+                        "from": "1",
+                        "fromString": "To Do",
+                        "to": "3",
+                        "toString": "In Progress",
+                    }
+                ],
+            }
+        ]
+        issue = make_issue(transitions=history)
+        transitions = _extract_transitions(issue, 1001, "PROJ-1")
+        assert transitions == []
+
+
+def _settings(**overrides: object) -> Settings:
+    return Settings.model_validate(
+        {
+            "url": "https://jira.example.com",
+            "api_token": "tok",
+            "email": "user@example.com",
+            **overrides,
+        }
+    )
+
+
+class TestProcessProject:
+    @pytest.mark.asyncio
+    async def test_non_numeric_project_id_is_skipped_not_raised(self) -> None:
+        project = make_project(project_id="not-an-int")
+        with (
+            patch(
+                "jira_ingest.processor.fetch_project_details",
+                new=AsyncMock(return_value=make_project_details()),
+            ),
+            patch("jira_ingest.processor.fetch_boards", new=AsyncMock(return_value=[])),
+        ):
+            results = [
+                item async for item in _process_project(None, _settings(), project, None, None)
+            ]
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_non_numeric_board_id_is_skipped_not_raised(self) -> None:
+        project = make_project()
+        bad_board = make_board(board_id="not-an-int")
+        with (
+            patch(
+                "jira_ingest.processor.fetch_project_details",
+                new=AsyncMock(return_value=make_project_details()),
+            ),
+            patch("jira_ingest.processor.fetch_boards", new=AsyncMock(return_value=[bad_board])),
+        ):
+            results = [
+                item async for item in _process_project(None, _settings(), project, None, None)
+            ]
+        data_types = [dtype for dtype, _ in results]
+        assert "projects" in data_types
+        assert "boards" not in data_types
