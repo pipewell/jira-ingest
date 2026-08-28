@@ -10,6 +10,10 @@ from typing import Any, Literal
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Data types the processor can emit. Keep in sync with the dtype strings
+# yielded by jira_ingest.processor.stream_all.
+VALID_DATA_TYPES = frozenset({"projects", "releases", "boards", "issues", "transitions"})
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -67,6 +71,24 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [k.strip() for k in v.split(",") if k.strip()]
         return list(v) if v else []
+
+    @field_validator("data_types", mode="before")
+    @classmethod
+    def parse_data_types(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            return [t.strip() for t in v.split(",") if t.strip()]
+        return list(v) if v else []
+
+    @field_validator("data_types")
+    @classmethod
+    def validate_data_types(cls, v: list[str]) -> list[str]:
+        unknown = sorted(set(v) - VALID_DATA_TYPES)
+        if unknown:
+            raise ValueError(
+                f"Unknown JIRA_DATA_TYPES entries: {unknown}. "
+                f"Valid values: {sorted(VALID_DATA_TYPES)}"
+            )
+        return v
 
     @field_validator("custom_fields", "sink_options", mode="before")
     @classmethod

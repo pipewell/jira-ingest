@@ -64,8 +64,12 @@ async def stream_all(
     """Top-level generator: fetch and yield all configured data types.
 
     Yields ``(data_type, records)`` tuples where ``records`` is a list of
-    plain dicts ready to be written by the output layer.
+    plain dicts ready to be written by the output layer. Only data types
+    listed in ``settings.data_types`` are yielded; boards and issues are
+    still fetched internally when needed to derive other requested types
+    (e.g. issues must be fetched to produce transitions).
     """
+    enabled_types = frozenset(settings.data_types)
     projects = await fetch_projects(client, settings.project_keys or None)
 
     for batch in batched(projects, batch_size):
@@ -77,7 +81,7 @@ async def stream_all(
         ]
         for coro in asyncio.as_completed(tasks):
             for dtype, records in await coro:
-                if records:
+                if records and dtype in enabled_types:
                     yield dtype, records
 
 

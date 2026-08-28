@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from jira_ingest.config import Settings
-from jira_ingest.processor import _extract_issue, _extract_transitions, _process_project
+from jira_ingest.processor import _extract_issue, _extract_transitions, _process_project, stream_all
 from jira_ingest.schemas import ProjectRecord
 from tests.conftest import make_board, make_issue, make_project, make_project_details
 
@@ -170,6 +170,69 @@ def _settings(**overrides: object) -> Settings:
             **overrides,
         }
     )
+
+
+class TestStreamAllDataTypeFiltering:
+    @pytest.mark.asyncio
+    async def test_only_yields_configured_data_types(self) -> None:
+        project = make_project()
+        board = make_board()
+        issue = make_issue()
+        with (
+            patch(
+                "jira_ingest.processor.fetch_projects",
+                new=AsyncMock(return_value=[project]),
+            ),
+            patch(
+                "jira_ingest.processor.fetch_project_details",
+                new=AsyncMock(return_value=make_project_details()),
+            ),
+            patch(
+                "jira_ingest.processor.fetch_boards",
+                new=AsyncMock(return_value=[board]),
+            ),
+            patch(
+                "jira_ingest.processor.fetch_issues_for_board",
+                new=AsyncMock(return_value=[issue]),
+            ),
+        ):
+            settings = _settings(data_types=["projects", "issues"])
+            results = [item async for item in stream_all(None, settings)]
+        data_types = {dtype for dtype, _ in results}
+        assert data_types == {"projects", "issues"}
+
+    @pytest.mark.asyncio
+    async def test_default_settings_yield_every_data_type(self) -> None:
+        project = make_project()
+        board = make_board()
+        issue = make_issue(
+            transitions=[
+                {"id": "1", "author": {}, "created": "2024-01-01", "items": [{"field": "status"}]}
+            ]
+        )
+        with (
+            patch(
+                "jira_ingest.processor.fetch_projects",
+                new=AsyncMock(return_value=[project]),
+            ),
+            patch(
+                "jira_ingest.processor.fetch_project_details",
+                new=AsyncMock(
+                    return_value=make_project_details(versions=[{"id": "1", "name": "v1"}])
+                ),
+            ),
+            patch(
+                "jira_ingest.processor.fetch_boards",
+                new=AsyncMock(return_value=[board]),
+            ),
+            patch(
+                "jira_ingest.processor.fetch_issues_for_board",
+                new=AsyncMock(return_value=[issue]),
+            ),
+        ):
+            results = [item async for item in stream_all(None, _settings())]
+        data_types = {dtype for dtype, _ in results}
+        assert data_types == {"projects", "releases", "boards", "issues", "transitions"}
 
 
 class TestProcessProject:
