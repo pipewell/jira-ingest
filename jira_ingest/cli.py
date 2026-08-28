@@ -71,7 +71,9 @@ def run(
         settings.sink_uri,
     )
 
-    # Accumulate all records so we can pass them to the database loader in one go
+    # Accumulate all records in memory: the file writers need every record for a
+    # data type in one call (Parquet has no cheap append), and the database
+    # loader below needs the full set too.
     all_records: dict[str, list[dict[str, object]]] = {}
 
     async def _run() -> dict[str, int]:
@@ -83,12 +85,14 @@ def run(
                 start_date=start_date,
                 end_date=end_date,
             ):
-                writer.write(data_type, records, sink, suffix)
                 counts[data_type] = counts.get(data_type, 0) + len(records)
                 all_records.setdefault(data_type, []).extend(records)
         return counts
 
     counts = asyncio.run(_run())
+
+    for data_type, records in all_records.items():
+        writer.write(data_type, records, sink, suffix)
 
     for data_type, n in sorted(counts.items()):
         click.echo(f"  {data_type}: {n:,} records")

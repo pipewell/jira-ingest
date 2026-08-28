@@ -88,8 +88,11 @@ class CsvWriter(BaseWriter):
 class ParquetWriter(BaseWriter):
     """Parquet writer using PyArrow with Snappy compression.
 
-    Each call overwrites the target file. For incremental/partitioned output
-    call with distinct ``date_suffix`` values or add a partition column.
+    Each call overwrites the target file, so callers must pass every record
+    for a given ``(data_type, date_suffix)`` in a single ``write()`` call
+    (the CLI accumulates records in memory across the run for this reason).
+    For genuinely incremental/partitioned output, use distinct ``date_suffix``
+    values or add a partition column instead.
     """
 
     def write(
@@ -108,7 +111,7 @@ class ParquetWriter(BaseWriter):
         table = pa.Table.from_pandas(df, preserve_index=False)
 
         buf = io.BytesIO()
-        pq.write_table(table, buf, compression="snappy")  # type: ignore[no-untyped-call]
+        pq.write_table(table, buf, compression="snappy")
         buf.seek(0)
 
         with sink.open(path, "wb") as f:
