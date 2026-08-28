@@ -264,6 +264,22 @@ def _redshift_loader() -> RedshiftLoader:
     return ldr
 
 
+def test_redshift_loader_pg_upsert_uses_plain_insert_not_on_conflict() -> None:
+    """Redshift reports a "postgresql" dialect name but its SQL grammar has no
+    ON CONFLICT clause, so RedshiftLoader must not use the base class's
+    postgres upsert path."""
+    ldr = _redshift_loader()
+    mock_conn = MagicMock()
+    mock_table = MagicMock()
+    records = [{"id": 1}, {"id": 2}]
+
+    result = ldr._pg_upsert(mock_conn, mock_table, records)
+
+    mock_table.insert.assert_called_once_with()
+    mock_conn.execute.assert_called_once_with(mock_table.insert.return_value, records)
+    assert result == len(records)
+
+
 def test_load_all_from_s3_skips_data_types_with_no_file(tmp_path: Path) -> None:
     """Regression test for #2: a COPY against a data type that produced zero
     records (so ParquetWriter never wrote a file) must not crash the run."""

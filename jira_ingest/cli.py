@@ -44,7 +44,10 @@ def cli() -> None:
 @click.option(
     "--redshift-iam-role",
     default="",
-    help="IAM role ARN for Redshift S3 COPY (used with --database-url on Redshift)",
+    help=(
+        "IAM role ARN; required with --database-url when the target is Redshift "
+        "(selects Redshift-safe INSERTs, and enables S3 COPY if the sink is s3://)"
+    ),
     envvar="REDSHIFT_IAM_ROLE",
 )
 def run(

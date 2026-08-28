@@ -15,9 +15,13 @@ The ``database_url`` argument is a standard SQLAlchemy connection URL, e.g.:
     ``sqlite:///:memory:``
 
 Bulk-insert strategy by dialect:
-  - PostgreSQL / Redshift: INSERT ... ON CONFLICT DO NOTHING  (idempotent)
-  - SQLite:                INSERT OR IGNORE                   (idempotent)
-  - Everything else:       plain INSERT  (caller is responsible for idempotency)
+  - PostgreSQL:      INSERT ... ON CONFLICT DO NOTHING  (idempotent)
+  - SQLite:           INSERT OR IGNORE                   (idempotent)
+  - Everything else:  plain INSERT  (caller is responsible for idempotency)
+
+Redshift reports a ``postgresql`` dialect name (see ``RedshiftLoader``) but
+does not support ``ON CONFLICT``; ``RedshiftLoader`` overrides ``_pg_upsert``
+to use a plain INSERT instead.
 """
 
 from __future__ import annotations

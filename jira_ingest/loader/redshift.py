@@ -6,13 +6,17 @@ already written Parquet files to S3 and you want to avoid re-streaming
 records through Python.
 
 For row-by-row loads (e.g. small datasets or non-S3 sinks) just call the
-inherited ``load(data_type, records)`` method instead -- it uses the standard
-PostgreSQL ON CONFLICT DO NOTHING path, which Redshift supports.
+inherited ``load(data_type, records)`` method instead. Redshift's wire
+protocol reports a ``postgresql`` SQLAlchemy dialect name (since connections
+normally use ``postgresql+psycopg2://``), but Redshift's INSERT grammar has
+no ``ON CONFLICT`` clause, so the base class's Postgres upsert path is
+overridden below to fall back to a plain INSERT for this dialect.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import fsspec
 from sqlalchemy import text
@@ -45,6 +49,17 @@ class RedshiftLoader(SQLAlchemyLoader):
     ) -> None:
         super().__init__(database_url, schema=schema, batch_size=batch_size, echo=echo)
         self._iam_role = iam_role
+
+    def _pg_upsert(self, conn: Any, table: Any, records: list[dict[str, Any]]) -> int:
+        """Plain INSERT: Redshift has no ``ON CONFLICT`` support.
+
+        Unlike the base class's Postgres path, this does not deduplicate.
+        Callers loading into Redshift without an S3 sink are responsible for
+        their own idempotency (e.g. truncate-and-reload); use
+        ``load_from_s3`` for large loads instead.
+        """
+        conn.execute(table.insert(), records)
+        return len(records)
 
     def load_from_s3(self, data_type: str, s3_prefix: str) -> None:
         """COPY all Parquet files under ``s3_prefix`` into the target table.
