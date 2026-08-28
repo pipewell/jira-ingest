@@ -3,11 +3,26 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from jira_ingest.client import JiraClient
 
 logger = logging.getLogger(__name__)
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _validate_jql_date(label: str, value: str) -> None:
+    """Reject anything that isn't a plain YYYY-MM-DD before it reaches JQL.
+
+    These values are interpolated directly into a JQL string, so a stray
+    quote or unexpected character would otherwise produce invalid JQL that
+    fails cryptically against the Jira API.
+    """
+    if not _DATE_RE.match(value):
+        raise ValueError(f"{label} must be in YYYY-MM-DD format, got {value!r}")
+
 
 # ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -63,8 +78,10 @@ async def fetch_issues_for_board(
     """
     jql_parts: list[str] = []
     if start_date:
+        _validate_jql_date("start_date", start_date)
         jql_parts.append(f"(created >= '{start_date}' OR updated >= '{start_date}')")
     if end_date:
+        _validate_jql_date("end_date", end_date)
         jql_parts.append(f"(created <= '{end_date}' OR updated <= '{end_date}')")
     jql = " AND ".join(jql_parts) if jql_parts else None
 
