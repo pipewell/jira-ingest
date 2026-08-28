@@ -16,8 +16,13 @@ def configure_logging(log_level: str = "INFO") -> logging.Logger:
 
 
 def hash_pii(*fields: str) -> str:
-    """SHA-256 hash of one or more PII fields concatenated together."""
-    combined = "".join(fields)
+    """SHA-256 hash of one or more PII fields, joined on a delimiter.
+
+    Joining with a delimiter (rather than plain concatenation) keeps field
+    boundaries distinct, e.g. ``hash_pii("John", "Smith1")`` no longer
+    collides with ``hash_pii("JohnSmith", "1")``.
+    """
+    combined = "\x1f".join(fields)
     return hashlib.sha256(combined.encode("utf-8")).hexdigest()
 
 

@@ -15,6 +15,12 @@ class TestHashPii:
         assert len(result) == 64
         assert all(c in "0123456789abcdef" for c in result)
 
+    def test_field_boundary_does_not_collide(self) -> None:
+        """Regression test for #6: plain concatenation let different field
+        splits hash identically, e.g. ("John", "Smith1") vs ("JohnSmith", "1")."""
+        assert hash_pii("John", "Smith1") != hash_pii("JohnSmith", "1")
+        assert hash_pii("JohnS", "mith1") != hash_pii("JohnSmith", "1")
+
 
 class TestSafeInt:
     def test_valid_int_string(self) -> None:
