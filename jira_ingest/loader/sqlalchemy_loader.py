@@ -30,6 +30,7 @@ from sqlalchemy.engine import Engine
 
 from jira_ingest.loader.base import BaseLoader
 from jira_ingest.loader.tables import TABLE_NAMES, build_metadata
+from jira_ingest.utils import batched
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ class SQLAlchemyLoader(BaseLoader):
 
         total = 0
         with self._engine.begin() as conn:
-            for batch in _batches(records, self._batch_size):
+            for batch in batched(records, self._batch_size):
                 cleaned = _normalise_batch(batch)
                 if dialect in _PG_FAMILY:
                     total += self._pg_upsert(conn, table, cleaned)
@@ -115,10 +116,6 @@ class SQLAlchemyLoader(BaseLoader):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _batches(items: list[Any], n: int) -> list[list[Any]]:
-    return [items[i : i + n] for i in range(0, len(items), n)]
 
 
 def _normalise_batch(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

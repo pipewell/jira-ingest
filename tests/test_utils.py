@@ -1,6 +1,20 @@
 """Tests for utility functions."""
 
-from jira_ingest.utils import clean_whitespace, hash_pii, safe_bool, safe_int, safe_str
+from jira_ingest.utils import batched, clean_whitespace, hash_pii, safe_bool, safe_int, safe_str
+
+
+class TestBatched:
+    def test_splits_into_chunks(self) -> None:
+        assert batched([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]
+
+    def test_exact_multiple(self) -> None:
+        assert batched([1, 2, 3, 4], 2) == [[1, 2], [3, 4]]
+
+    def test_empty_list(self) -> None:
+        assert batched([], 3) == []
+
+    def test_n_larger_than_list(self) -> None:
+        assert batched([1, 2], 10) == [[1, 2]]
 
 
 class TestHashPii:

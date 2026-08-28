@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any
+from typing import Any, TypeVar
+
+T = TypeVar("T")
+
+
+def batched(items: list[T], n: int) -> list[list[T]]:
+    """Split ``items`` into consecutive chunks of at most ``n`` elements."""
+    return [items[i : i + n] for i in range(0, len(items), n)]
 
 
 def configure_logging(log_level: str = "INFO") -> logging.Logger:

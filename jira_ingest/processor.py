@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
-from itertools import islice
 from typing import Any
 
 from pydantic import ValidationError
@@ -30,7 +29,7 @@ from jira_ingest.schemas import (
     ReleaseRecord,
     TransitionRecord,
 )
-from jira_ingest.utils import clean_whitespace, hash_pii, safe_int, safe_str
+from jira_ingest.utils import batched, clean_whitespace, hash_pii, safe_int, safe_str
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +68,7 @@ async def stream_all(
     """
     projects = await fetch_projects(client, settings.project_keys or None)
 
-    def _batches(items: list[Any], n: int) -> list[list[Any]]:
-        it = iter(items)
-        return [list(islice(it, n)) for _ in range(0, len(items), n) if True]
-
-    batches = list(_batches(projects, batch_size))
-    for batch in batches:
+    for batch in batched(projects, batch_size):
         tasks = [
             asyncio.create_task(
                 _collect(_process_project(client, settings, project, start_date, end_date))
