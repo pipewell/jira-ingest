@@ -9,6 +9,7 @@ Postgres or Redshift.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -231,3 +232,36 @@ def test_build_metadata_with_schema() -> None:
 def test_table_names_covers_all_data_types() -> None:
     expected = {"projects", "releases", "boards", "issues", "transitions"}
     assert set(TABLE_NAMES.keys()) == expected
+
+
+# ── Redshift S3 COPY ─────────────────────────────────────────────────────────
+
+
+def _redshift_loader() -> RedshiftLoader:
+    with patch("jira_ingest.loader.sqlalchemy_loader.create_engine", return_value=MagicMock()):
+        ldr = create_loader("redshift+psycopg2://user:pass@host:5439/db")
+    assert isinstance(ldr, RedshiftLoader)
+    return ldr
+
+
+def test_load_all_from_s3_skips_data_types_with_no_file(tmp_path: Path) -> None:
+    """Regression test for #2: a COPY against a data type that produced zero
+    records (so ParquetWriter never wrote a file) must not crash the run."""
+    (tmp_path / "projects").mkdir()
+    (tmp_path / "projects" / "projects_20240601.parquet").write_bytes(b"fake-parquet")
+    # No file written for any other data type.
+
+    ldr = _redshift_loader()
+    with patch.object(ldr, "load_from_s3") as mock_load_from_s3:
+        ldr.load_all_from_s3(str(tmp_path), "20240601")
+
+    called_types = {call.args[0] for call in mock_load_from_s3.call_args_list}
+    assert called_types == {"projects"}
+
+
+def test_load_all_from_s3_calls_nothing_when_no_files_exist(tmp_path: Path) -> None:
+    ldr = _redshift_loader()
+    with patch.object(ldr, "load_from_s3") as mock_load_from_s3:
+        ldr.load_all_from_s3(str(tmp_path), "20240601")
+
+    mock_load_from_s3.assert_not_called()

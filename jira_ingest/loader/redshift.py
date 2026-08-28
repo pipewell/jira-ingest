@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 
+import fsspec
 from sqlalchemy import text
 
 from jira_ingest.loader.sqlalchemy_loader import SQLAlchemyLoader
@@ -72,7 +73,17 @@ class RedshiftLoader(SQLAlchemyLoader):
             conn.execute(sql, {"s3_prefix": s3_prefix, "iam_role": self._iam_role})
 
     def load_all_from_s3(self, s3_sink_uri: str, date_suffix: str) -> None:
-        """COPY all data types from an S3 sink for a given date suffix."""
+        """COPY all data types from an S3 sink for a given date suffix.
+
+        Data types that produced zero records never get a Parquet file
+        written by ``ParquetWriter``, so those are skipped here rather than
+        issuing a COPY against a nonexistent key (which would fail and abort
+        the whole load).
+        """
         for data_type in TABLE_NAMES:
             prefix = f"{s3_sink_uri.rstrip('/')}/{data_type}/{data_type}_{date_suffix}.parquet"
+            fs, _ = fsspec.core.url_to_fs(prefix)
+            if not fs.exists(prefix):
+                logger.info("Skipping COPY for %s: no file at %s", data_type, prefix)
+                continue
             self.load_from_s3(data_type, prefix)
