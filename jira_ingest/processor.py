@@ -98,6 +98,7 @@ async def _process_project(
 ) -> DataStream:
     project = clean_whitespace(project)
     project_self = project.get("self", "")
+    enabled_types = frozenset(settings.data_types)
 
     try:
         details = await fetch_project_details(client, project_self)
@@ -151,6 +152,10 @@ async def _process_project(
         yield "releases", releases
 
     # ── Boards + Issues + Transitions ──────────────────────────────────────────
+    if not (enabled_types & {"boards", "issues", "transitions"}):
+        return
+
+    need_issues = bool(enabled_types & {"issues", "transitions"})
     boards_raw = await fetch_boards(client, proj_record.key)
     seen_issues: set[str] = set()
 
@@ -166,6 +171,9 @@ async def _process_project(
             yield "boards", [board_rec.model_dump()]
         except (ValidationError, KeyError, ValueError) as exc:
             logger.debug("Skipping board %s: %s", board.get("id"), exc)
+            continue
+
+        if not need_issues:
             continue
 
         issues_raw = await fetch_issues_for_board(client, board_id, start_date, end_date)
