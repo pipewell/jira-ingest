@@ -5,9 +5,10 @@ from __future__ import annotations
 import base64
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
 import pytest
 
-from jira_ingest.client import JiraClient
+from jira_ingest.client import JiraClient, _is_retryable
 from jira_ingest.config import Settings
 
 
@@ -117,3 +118,32 @@ class TestPagination:
                 results = await client.get_paginated("/rest/api/2/search", "issues")
 
         assert results == []
+
+
+class TestRetryPredicate:
+    def _response_error(self, status: int) -> aiohttp.ClientResponseError:
+        return aiohttp.ClientResponseError(None, (), status=status)
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404])
+    def test_client_errors_are_not_retryable(self, status: int) -> None:
+        assert _is_retryable(self._response_error(status)) is False
+
+    @pytest.mark.parametrize("status", [500, 502, 503])
+    def test_server_errors_are_retryable(self, status: int) -> None:
+        assert _is_retryable(self._response_error(status)) is True
+
+    def test_connection_errors_are_retryable(self) -> None:
+        assert _is_retryable(ConnectionError("boom")) is True
+
+    def test_unrelated_exceptions_are_not_retryable(self) -> None:
+        assert _is_retryable(ValueError("boom")) is False
+
+
+class TestSslContextCaching:
+    @pytest.mark.asyncio
+    async def test_ssl_context_built_once_on_enter(self) -> None:
+        s = dc_settings()
+        with patch.object(JiraClient, "_build_ssl_context", return_value=True) as mock_build:
+            async with JiraClient(s):
+                pass
+        mock_build.assert_called_once()

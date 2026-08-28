@@ -15,7 +15,7 @@ from aiocache import SimpleMemoryCache
 from tenacity import (
     before_sleep_log,
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -30,6 +30,13 @@ _RETRYABLE = (
     asyncio.TimeoutError,
     ConnectionError,
 )
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Retry transient failures, but not permanent 4xx client errors."""
+    if isinstance(exc, aiohttp.ClientResponseError):
+        return bool(exc.status >= 500)
+    return isinstance(exc, _RETRYABLE)
 
 
 class JiraClient:
@@ -53,12 +60,14 @@ class JiraClient:
         self._cache: SimpleMemoryCache = SimpleMemoryCache()
         self._pem_path: str | None = settings.resolve_pem_path()
         self._session: aiohttp.ClientSession | None = None
+        self._ssl_ctx: ssl.SSLContext | bool = True
 
     async def __aenter__(self) -> JiraClient:
         self._session = aiohttp.ClientSession(
             headers=self._build_headers(),
             timeout=self._timeout,
         )
+        self._ssl_ctx = self._build_ssl_context()
         return self
 
     async def __aexit__(self, *_: Any) -> None:
@@ -139,17 +148,16 @@ class JiraClient:
         @retry(
             wait=wait_exponential(multiplier=1, min=4, max=300),
             stop=stop_after_attempt(settings.max_retry_attempts),
-            retry=retry_if_exception_type(_RETRYABLE),
+            retry=retry_if_exception(_is_retryable),
             before_sleep=before_sleep_log(logger, logging.WARNING),
         )
         async def _do() -> Any:
             assert self._session is not None, "Call within async context manager"
             url = urljoin(self._base_url + "/", endpoint.lstrip("/"))
-            ssl_ctx = self._build_ssl_context()
 
             async with self._semaphore:
                 t0 = time.monotonic()
-                async with self._session.get(url, params=params, ssl=ssl_ctx) as resp:
+                async with self._session.get(url, params=params, ssl=self._ssl_ctx) as resp:
                     elapsed = time.monotonic() - t0
                     logger.debug("GET %s -> %d (%.2fs)", url, resp.status, elapsed)
                     resp.raise_for_status()
