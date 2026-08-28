@@ -57,6 +57,24 @@ class TestProjectKeys:
         assert s.project_keys == []
 
 
+class TestDataTypes:
+    def test_default_is_all_types(self) -> None:
+        s = make_settings()
+        assert set(s.data_types) == {"projects", "releases", "boards", "issues", "transitions"}
+
+    def test_comma_separated_string(self) -> None:
+        s = make_settings(data_types="projects, issues")
+        assert s.data_types == ["projects", "issues"]
+
+    def test_empty_string_gives_empty_list(self) -> None:
+        s = make_settings(data_types="")
+        assert s.data_types == []
+
+    def test_unknown_value_raises(self) -> None:
+        with pytest.raises(ValidationError, match="Unknown JIRA_DATA_TYPES"):
+            make_settings(data_types="projects,not_a_type")
+
+
 class TestCustomFields:
     def test_parses_json_string(self) -> None:
         s = make_settings(custom_fields='{"type_of_work": "customfield_10100"}')

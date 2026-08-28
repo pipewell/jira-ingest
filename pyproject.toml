@@ -67,6 +67,11 @@ database = [
 redshift = [
     "sqlalchemy>=2.0",
     "redshift-connector>=2.1",
+    # Registers the "redshift"/"redshift+psycopg2"/"redshift+redshift_connector"
+    # SQLAlchemy dialects. Not required for the standard COPY workflow (that
+    # uses a plain "postgresql+psycopg2" URL with --redshift-iam-role), only
+    # for connecting via an explicit redshift+* URL scheme.
+    "sqlalchemy-redshift>=1.0.0",
 ]
 dev = [
     "sqlalchemy>=2.0",

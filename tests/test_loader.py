@@ -53,6 +53,26 @@ def test_redshift_loader_is_sqlalchemy_subclass() -> None:
     assert isinstance(ldr, BaseLoader)
 
 
+def test_create_loader_returns_redshift_when_iam_role_given_on_postgres_url() -> None:
+    # Redshift speaks the PostgreSQL wire protocol, so the documented and
+    # recommended way to target it is a plain postgresql+psycopg2 URL --
+    # the redshift+* schemes require the optional sqlalchemy-redshift
+    # package. Passing an iam_role is what should select RedshiftLoader.
+    with patch("jira_ingest.loader.sqlalchemy_loader.create_engine", return_value=MagicMock()):
+        ldr = create_loader(
+            "postgresql+psycopg2://user:pass@cluster.us-east-1.redshift.amazonaws.com:5439/dev",
+            iam_role="arn:aws:iam::123456789012:role/RedshiftS3ReadRole",
+        )
+    assert isinstance(ldr, RedshiftLoader)
+
+
+def test_create_loader_returns_sqlalchemy_for_postgres_url_without_iam_role() -> None:
+    with patch("jira_ingest.loader.sqlalchemy_loader.create_engine", return_value=MagicMock()):
+        ldr = create_loader("postgresql+psycopg2://user:pass@cluster:5439/dev")
+    assert isinstance(ldr, SQLAlchemyLoader)
+    assert not isinstance(ldr, RedshiftLoader)
+
+
 # ── Table creation ────────────────────────────────────────────────────────────
 
 

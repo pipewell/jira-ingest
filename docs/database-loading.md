@@ -59,9 +59,9 @@ jira-ingest run
 
 ## Redshift
 
-Redshift exposes a PostgreSQL-compatible wire protocol, so the standard psycopg2 driver works. When you also have an S3 sink configured, jira-ingest detects the combination and uses COPY instead.
+Redshift exposes a PostgreSQL-compatible wire protocol, so the standard psycopg2 driver works and the URL keeps the `postgresql+psycopg2` scheme -- there is no need for a Redshift-specific SQLAlchemy dialect. Passing `--redshift-iam-role` (or `REDSHIFT_IAM_ROLE`) is what tells jira-ingest to treat the target as Redshift; when you also have an S3 sink configured, it then uses COPY instead of row-by-row inserts.
 
-**In-memory insert path (any sink):**
+**In-memory insert path (any sink, no IAM role):**
 
 ```bash
 pip install "jira-ingest[database]" psycopg2-binary
@@ -73,15 +73,20 @@ jira-ingest run \
 
 **S3 COPY fast path (S3 sink + IAM role):**
 
+The sink is configured via the `JIRA_SINK_URI` environment variable (or `.env` file), not a CLI flag:
+
+```dotenv
+JIRA_SINK_URI=s3://my-bucket/jira-ingest
+```
+
 ```bash
 jira-ingest run \
-  --sink-uri s3://my-bucket/jira-ingest \
   --database-url "postgresql+psycopg2://user:pass@cluster.us-east-1.redshift.amazonaws.com:5439/dev" \
   --db-schema bronze \
   --redshift-iam-role "arn:aws:iam::123456789012:role/RedshiftS3ReadRole"
 ```
 
-When both `--database-url` points at Redshift and `JIRA_SINK_URI` starts with `s3://`, the pipeline automatically issues:
+When `--redshift-iam-role` is supplied and `JIRA_SINK_URI` starts with `s3://`, the pipeline automatically issues:
 
 ```sql
 COPY bronze.jira_issues
@@ -156,7 +161,7 @@ n = loader.load("issues", records)
 print(f"Loaded {n} rows")
 ```
 
-The `create_loader` factory picks `RedshiftLoader` for `redshift+*` URLs and `SQLAlchemyLoader` for everything else. Both implement the same `BaseLoader` interface, so you can swap databases without changing calling code.
+The `create_loader` factory picks `RedshiftLoader` when you pass a non-empty `iam_role`, or when the URL scheme is one of the `redshift+*` dialects registered by the optional `sqlalchemy-redshift` package (install the `redshift` extra for that); everything else returns `SQLAlchemyLoader`. Both implement the same `BaseLoader` interface, so you can swap databases without changing calling code.
 
 ---
 
