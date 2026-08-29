@@ -11,10 +11,18 @@ protocol reports a ``postgresql`` SQLAlchemy dialect name (since connections
 normally use ``postgresql+psycopg2://``), but Redshift's INSERT grammar has
 no ``ON CONFLICT`` clause, so the base class's Postgres upsert path is
 overridden below to fall back to a plain INSERT for this dialect.
+
+Redshift also lacks the ``SERIAL`` pseudo-type and any native JSON column
+type, both of which the generic table metadata otherwise uses when compiled
+against the ``postgresql`` dialect. ``build_metadata(redshift=True)`` (used
+below) declares plain integer primary keys and a ``TEXT`` column for
+``custom_fields`` instead; ``_prepare_batch`` below JSON-encodes that field
+to match.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -47,8 +55,21 @@ class RedshiftLoader(SQLAlchemyLoader):
         batch_size: int = 500,
         echo: bool = False,
     ) -> None:
-        super().__init__(database_url, schema=schema, batch_size=batch_size, echo=echo)
+        super().__init__(
+            database_url, schema=schema, batch_size=batch_size, echo=echo, redshift=True
+        )
         self._iam_role = iam_role
+
+    def _prepare_batch(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """JSON-encode ``custom_fields``: Redshift has no JSON column type, so
+        ``build_metadata(redshift=True)`` declares it as ``TEXT`` instead."""
+        result = []
+        for record in records:
+            value = record.get("custom_fields")
+            if isinstance(value, dict | list):
+                record = {**record, "custom_fields": json.dumps(value)}
+            result.append(record)
+        return result
 
     def _pg_upsert(self, conn: Any, table: Any, records: list[dict[str, Any]]) -> int:
         """Plain INSERT: Redshift has no ``ON CONFLICT`` support.

@@ -88,6 +88,29 @@ def test_ensure_tables_is_idempotent(loader: SQLAlchemyLoader) -> None:
     assert len(db_tables) == len(TABLE_NAMES)
 
 
+def test_build_metadata_redshift_avoids_serial_and_json() -> None:
+    """Redshift has no SERIAL pseudo-type and no native JSON column type;
+    build_metadata(redshift=True) must not compile either against postgresql."""
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.schema import CreateTable
+
+    meta = build_metadata(schema=None, redshift=True)
+    issues_ddl = str(CreateTable(meta.tables["jira_issues"]).compile(dialect=postgresql.dialect()))
+    assert "SERIAL" not in issues_ddl
+    assert "JSON" not in issues_ddl
+    assert "custom_fields TEXT" in issues_ddl
+
+    for table_name in ("jira_projects", "jira_releases", "jira_boards"):
+        ddl = str(CreateTable(meta.tables[table_name]).compile(dialect=postgresql.dialect()))
+        assert "SERIAL" not in ddl
+
+
+def test_build_metadata_default_still_uses_json_for_custom_fields() -> None:
+    meta = build_metadata(schema=None)
+    assert "custom_fields" in meta.tables["jira_issues"].c
+    assert meta.tables["jira_issues"].c.custom_fields.type.__class__.__name__ == "JSON"
+
+
 # ── Projects ──────────────────────────────────────────────────────────────────
 
 
@@ -278,6 +301,27 @@ def test_redshift_loader_pg_upsert_uses_plain_insert_not_on_conflict() -> None:
     mock_table.insert.assert_called_once_with()
     mock_conn.execute.assert_called_once_with(mock_table.insert.return_value, records)
     assert result == len(records)
+
+
+def test_redshift_loader_json_encodes_custom_fields_on_insert() -> None:
+    """custom_fields is TEXT on Redshift; RedshiftLoader must serialize dicts
+    to JSON strings itself instead of relying on a native JSON column type."""
+    ldr = RedshiftLoader("sqlite:///:memory:", schema=None)
+    ldr.ensure_tables()
+
+    n = ldr.load("issues", [{"id": 1, "key": "PROJ-1", "custom_fields": {"foo": "bar"}}])
+    assert n == 1
+
+    with ldr.engine.connect() as conn:
+        value = conn.execute(text("SELECT custom_fields FROM jira_issues WHERE id = 1")).scalar()
+    assert value == '{"foo": "bar"}'
+
+
+def test_redshift_loader_prepare_batch_leaves_non_dict_values_untouched() -> None:
+    ldr = RedshiftLoader("sqlite:///:memory:", schema=None)
+    records = [{"id": 1, "custom_fields": None}, {"id": 2, "custom_fields": "already-a-string"}]
+    result = ldr._prepare_batch(records)
+    assert result == records
 
 
 def test_load_all_from_s3_skips_data_types_with_no_file(tmp_path: Path) -> None:
