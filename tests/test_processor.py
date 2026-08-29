@@ -234,6 +234,53 @@ class TestStreamAllDataTypeFiltering:
         data_types = {dtype for dtype, _ in results}
         assert data_types == {"projects", "releases", "boards", "issues", "transitions"}
 
+    @pytest.mark.asyncio
+    async def test_projects_only_selection_skips_board_and_issue_fetches(self) -> None:
+        project = make_project()
+        fetch_boards_mock = AsyncMock(return_value=[make_board()])
+        fetch_issues_mock = AsyncMock(return_value=[make_issue()])
+        with (
+            patch(
+                "jira_ingest.processor.fetch_projects",
+                new=AsyncMock(return_value=[project]),
+            ),
+            patch(
+                "jira_ingest.processor.fetch_project_details",
+                new=AsyncMock(return_value=make_project_details()),
+            ),
+            patch("jira_ingest.processor.fetch_boards", new=fetch_boards_mock),
+            patch("jira_ingest.processor.fetch_issues_for_board", new=fetch_issues_mock),
+        ):
+            settings = _settings(data_types=["projects"])
+            results = [item async for item in stream_all(None, settings)]
+        assert {dtype for dtype, _ in results} == {"projects"}
+        fetch_boards_mock.assert_not_called()
+        fetch_issues_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_boards_only_selection_skips_issue_fetch(self) -> None:
+        project = make_project()
+        fetch_issues_mock = AsyncMock(return_value=[make_issue()])
+        with (
+            patch(
+                "jira_ingest.processor.fetch_projects",
+                new=AsyncMock(return_value=[project]),
+            ),
+            patch(
+                "jira_ingest.processor.fetch_project_details",
+                new=AsyncMock(return_value=make_project_details()),
+            ),
+            patch(
+                "jira_ingest.processor.fetch_boards",
+                new=AsyncMock(return_value=[make_board()]),
+            ),
+            patch("jira_ingest.processor.fetch_issues_for_board", new=fetch_issues_mock),
+        ):
+            settings = _settings(data_types=["boards"])
+            results = [item async for item in stream_all(None, settings)]
+        assert {dtype for dtype, _ in results} == {"boards"}
+        fetch_issues_mock.assert_not_called()
+
 
 class TestProcessProject:
     @pytest.mark.asyncio

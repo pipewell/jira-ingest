@@ -8,7 +8,7 @@ The `--database-url` flag activates the loader. After all files have been writte
 
 1. `ensure_tables()` runs `CREATE TABLE IF NOT EXISTS` for all five Jira tables.
 2. Records are bulk-inserted in batches of 500 (configurable).
-3. Duplicate rows are silently skipped via `ON CONFLICT DO NOTHING` (Postgres family) or `INSERT OR IGNORE` (SQLite).
+3. Duplicate rows are silently skipped via `ON CONFLICT DO NOTHING` (PostgreSQL) or `INSERT OR IGNORE` (SQLite). Redshift has no such clause -- see [Redshift](#redshift) below.
 
 For Redshift with an S3 sink the pipeline automatically switches to the native `COPY ... FROM S3` path, which is far faster than row-by-row insertion for large datasets.
 
@@ -21,7 +21,7 @@ For Redshift with an S3 sink the pipeline automatically switches to the native `
 | `jira_projects` | `id` | |
 | `jira_releases` | `release_id` | |
 | `jira_boards` | `board_id` | |
-| `jira_issues` | `id` | `custom_fields` stored as JSON/JSONB |
+| `jira_issues` | `id` | `custom_fields` stored as JSON/JSONB (Redshift: [`SUPER`](https://docs.aws.amazon.com/redshift/latest/dg/c_Supported_data_types.html), since Redshift has no JSON type) |
 | `jira_transitions` | `(transition_id, issue_id, transition_field)` | Composite unique constraint |
 
 The schema prefix (`--db-schema`) is applied to all table names.
@@ -59,17 +59,20 @@ jira-ingest run
 
 ## Redshift
 
-Redshift exposes a PostgreSQL-compatible wire protocol, so the standard psycopg2 driver works and the URL keeps the `postgresql+psycopg2` scheme -- there is no need for a Redshift-specific SQLAlchemy dialect. Passing `--redshift-iam-role` (or `REDSHIFT_IAM_ROLE`) is what tells jira-ingest to treat the target as Redshift; when you also have an S3 sink configured, it then uses COPY instead of row-by-row inserts.
+Redshift exposes a PostgreSQL-compatible wire protocol, so the standard psycopg2 driver works and the URL keeps the `postgresql+psycopg2` scheme -- there is no need for a Redshift-specific SQLAlchemy dialect. **Always pass `--redshift-iam-role` (or `REDSHIFT_IAM_ROLE`) when the target is Redshift**, even if you don't have an S3 sink configured: this is what tells jira-ingest to treat the target as Redshift and use INSERT statements Redshift actually supports (Redshift's SQL dialect has no `ON CONFLICT` clause, unlike PostgreSQL). Without it, jira-ingest can't distinguish the target from a real PostgreSQL database and will emit `ON CONFLICT`, which Redshift will reject.
 
-**In-memory insert path (any sink, no IAM role):**
+**In-memory insert path (no S3 sink):**
 
 ```bash
 pip install "jira-ingest[database]" psycopg2-binary
 
 jira-ingest run \
   --database-url "postgresql+psycopg2://user:pass@cluster.us-east-1.redshift.amazonaws.com:5439/dev" \
-  --db-schema bronze
+  --db-schema bronze \
+  --redshift-iam-role "arn:aws:iam::123456789012:role/RedshiftS3ReadRole"
 ```
+
+This path does row-by-row INSERTs with no deduplication (Redshift has no upsert clause to fall back to) -- re-running against the same data will duplicate rows. Use it only for small, one-off loads; prefer the S3 COPY path below for anything you'll run repeatedly.
 
 **S3 COPY fast path (S3 sink + IAM role):**
 
@@ -93,11 +96,12 @@ COPY bronze.jira_issues
 FROM 's3://my-bucket/jira-ingest/issues/issues_20240601.parquet'
 IAM_ROLE 'arn:aws:iam::123456789012:role/RedshiftS3ReadRole'
 FORMAT AS PARQUET
+SERIALIZETOJSON
 COMPUPDATE OFF
 STATUPDATE OFF;
 ```
 
-`COMPUPDATE OFF STATUPDATE OFF` prevents the post-load compression analysis that Redshift runs on new tables by default -- without these flags a large initial load can take hours.
+`COMPUPDATE OFF STATUPDATE OFF` prevents the post-load compression analysis that Redshift runs on new tables by default -- without these flags a large initial load can take hours. `SERIALIZETOJSON` converts Parquet's nested struct columns (`custom_fields`) into the target `SUPER` column -- see AWS's guidance on [COPY from Parquet/ORC into SUPER](https://docs.aws.amazon.com/redshift/latest/dg/copy_json.html).
 
 ---
 

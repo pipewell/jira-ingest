@@ -18,6 +18,7 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
 )
+from sqlalchemy.types import UserDefinedType
 
 # Logical name -> physical table name
 TABLE_NAMES: dict[str, str] = {
@@ -29,14 +30,42 @@ TABLE_NAMES: dict[str, str] = {
 }
 
 
-def build_metadata(schema: str | None = None) -> MetaData:
-    """Return a MetaData object containing all Jira tables bound to ``schema``."""
+class RedshiftSuper(UserDefinedType):
+    """Redshift's ``SUPER`` type: holds arbitrary semi-structured data.
+
+    Needed (rather than ``TEXT``) because the S3 COPY path loads Parquet's
+    nested struct columns via ``COPY ... SERIALIZETOJSON``, which only
+    targets ``SUPER`` columns -- Redshift's COPY requires the destination
+    column type to match what the Parquet/ORC source produces for nested
+    data. See ``RedshiftLoader.load_from_s3`` and ``RedshiftLoader._pg_upsert``.
+    """
+
+    cache_ok = True
+
+    def get_col_spec(self, **kw: object) -> str:
+        return "SUPER"
+
+
+def build_metadata(schema: str | None = None, redshift: bool = False) -> MetaData:
+    """Return a MetaData object containing all Jira tables bound to ``schema``.
+
+    Args:
+        schema: Target schema name.
+        redshift: Redshift has no ``SERIAL`` pseudo-type and no native JSON
+            column type. When ``True``, integer primary keys are declared
+            plain (every record already carries its own ``id`` from Jira, so
+            no dialect ever relies on DB-generated ids) and
+            ``jira_issues.custom_fields`` is declared as ``RedshiftSuper``
+            instead of ``JSON`` (see ``RedshiftLoader`` for how both the
+            row-wise and S3 COPY paths populate it).
+    """
     meta = MetaData(schema=schema)
+    custom_fields_type = RedshiftSuper() if redshift else JSON
 
     Table(
         "jira_projects",
         meta,
-        Column("id", Integer, primary_key=True),
+        Column("id", Integer, primary_key=True, autoincrement=False),
         Column("key", String(32), nullable=False),
         Column("name", String(256)),
         Column("project_type_key", String(64)),
@@ -50,7 +79,7 @@ def build_metadata(schema: str | None = None) -> MetaData:
     Table(
         "jira_releases",
         meta,
-        Column("release_id", Integer, primary_key=True),
+        Column("release_id", Integer, primary_key=True, autoincrement=False),
         Column("project_id", Integer, nullable=False),
         Column("project_key", String(32)),
         Column("release_name", String(256)),
@@ -63,7 +92,7 @@ def build_metadata(schema: str | None = None) -> MetaData:
     Table(
         "jira_boards",
         meta,
-        Column("board_id", Integer, primary_key=True),
+        Column("board_id", Integer, primary_key=True, autoincrement=False),
         Column("project_id", Integer, nullable=False),
         Column("name", String(256)),
         Column("board_type", String(32)),
@@ -72,7 +101,7 @@ def build_metadata(schema: str | None = None) -> MetaData:
     Table(
         "jira_issues",
         meta,
-        Column("id", Integer, primary_key=True),
+        Column("id", Integer, primary_key=True, autoincrement=False),
         Column("key", String(32), nullable=False),
         Column("project_id", Integer),
         Column("project_key", String(32)),
@@ -97,7 +126,7 @@ def build_metadata(schema: str | None = None) -> MetaData:
         Column("labels", String(1024)),
         Column("created", DateTime(timezone=True)),
         Column("updated", DateTime(timezone=True)),
-        Column("custom_fields", JSON),
+        Column("custom_fields", custom_fields_type),
     )
 
     Table(

@@ -15,9 +15,13 @@ The ``database_url`` argument is a standard SQLAlchemy connection URL, e.g.:
     ``sqlite:///:memory:``
 
 Bulk-insert strategy by dialect:
-  - PostgreSQL / Redshift: INSERT ... ON CONFLICT DO NOTHING  (idempotent)
-  - SQLite:                INSERT OR IGNORE                   (idempotent)
-  - Everything else:       plain INSERT  (caller is responsible for idempotency)
+  - PostgreSQL:      INSERT ... ON CONFLICT DO NOTHING  (idempotent)
+  - SQLite:           INSERT OR IGNORE                   (idempotent)
+  - Everything else:  plain INSERT  (caller is responsible for idempotency)
+
+Redshift reports a ``postgresql`` dialect name (see ``RedshiftLoader``) but
+does not support ``ON CONFLICT``; ``RedshiftLoader`` overrides ``_pg_upsert``
+to use a plain INSERT instead.
 """
 
 from __future__ import annotations
@@ -54,11 +58,12 @@ class SQLAlchemyLoader(BaseLoader):
         schema: str | None = None,
         batch_size: int = 500,
         echo: bool = False,
+        redshift: bool = False,
     ) -> None:
         self._engine: Engine = create_engine(database_url, echo=echo)
         self._schema = schema
         self._batch_size = batch_size
-        self._metadata = build_metadata(schema)
+        self._metadata = build_metadata(schema, redshift=redshift)
 
     @property
     def engine(self) -> Engine:
@@ -86,7 +91,7 @@ class SQLAlchemyLoader(BaseLoader):
         total = 0
         with self._engine.begin() as conn:
             for batch in batched(records, self._batch_size):
-                cleaned = _normalise_batch(batch)
+                cleaned = self._prepare_batch(_normalise_batch(batch))
                 if dialect in _PG_FAMILY:
                     total += self._pg_upsert(conn, table, cleaned)
                 elif dialect == "sqlite":
@@ -99,6 +104,14 @@ class SQLAlchemyLoader(BaseLoader):
         return total
 
     # ── Dialect-specific strategies ───────────────────────────────────────────
+
+    def _prepare_batch(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Hook for subclasses to adjust a batch just before it's inserted.
+
+        No-op by default; ``RedshiftLoader`` overrides this to JSON-encode
+        ``custom_fields`` since Redshift stores it as ``SUPER``, not JSON.
+        """
+        return records
 
     def _pg_upsert(self, conn: Any, table: Any, records: list[dict[str, Any]]) -> int:
         from sqlalchemy.dialects.postgresql import insert as pg_insert
