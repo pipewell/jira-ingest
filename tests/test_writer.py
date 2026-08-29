@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from jira_ingest.output.sink import Sink
@@ -91,6 +93,51 @@ class TestParquetWriter:
         sink = Sink(str(tmp_path))
         writer.write("projects", [], sink, "20240601")
         assert not (tmp_path / "projects" / "projects_20240601.parquet").exists()
+
+    def test_all_null_optional_columns_get_typed_not_null_type(self, tmp_path: Path) -> None:
+        """Redshift's COPY ... FORMAT AS PARQUET does strict column-type
+        matching and rejects an all-null Arrow `null`-typed source column
+        against any real target column type (confirmed against a real
+        Redshift Serverless workgroup). A batch where every issue lacks an
+        epic, a parent, or a created date -- entirely plausible in a real
+        Jira project -- must not produce `null`-typed Parquet columns for
+        those fields."""
+        records = [
+            {
+                "id": i,
+                "key": f"PROJ-{i}",
+                "project_id": 1,
+                "project_key": "PROJ",
+                "project_name": "Project",
+                "epic_id": None,
+                "epic_done": None,
+                "created": None,
+                "labels": None,
+                "custom_fields": {},
+            }
+            for i in range(1, 3)
+        ]
+        writer = ParquetWriter()
+        sink = Sink(str(tmp_path))
+        writer.write("issues", records, sink, "20240601")
+
+        schema = pq.read_schema(tmp_path / "issues" / "issues_20240601.parquet")
+        assert not pa.types.is_null(schema.field("epic_id").type)
+        assert pa.types.is_integer(schema.field("epic_id").type)
+        assert not pa.types.is_null(schema.field("epic_done").type)
+        assert pa.types.is_boolean(schema.field("epic_done").type)
+        assert not pa.types.is_null(schema.field("created").type)
+        assert pa.types.is_timestamp(schema.field("created").type)
+        assert not pa.types.is_null(schema.field("labels").type)
+        assert pa.types.is_string(schema.field("labels").type)
+
+    def test_populated_columns_unaffected_by_null_type_fix(self, tmp_path: Path) -> None:
+        writer = ParquetWriter()
+        sink = Sink(str(tmp_path))
+        writer.write("projects", SAMPLE_RECORDS, sink, "20240601")
+
+        df = pd.read_parquet(tmp_path / "projects" / "projects_20240601.parquet")
+        assert list(df["key"]) == ["PROJ-1", "PROJ-2"]
 
 
 class TestJsonLinesWriter:

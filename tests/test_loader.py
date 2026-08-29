@@ -73,6 +73,27 @@ def test_create_loader_returns_sqlalchemy_for_postgres_url_without_iam_role() ->
     assert not isinstance(ldr, RedshiftLoader)
 
 
+def test_redshift_loader_patches_backslash_escapes_for_postgresql_dialect() -> None:
+    """SQLAlchemy's postgresql dialect probes standard_conforming_strings on
+    first connect; real PostgreSQL supports this GUC but Redshift raises
+    "unrecognized configuration parameter" and every connection fails before
+    any query of ours runs (confirmed against a real Redshift Serverless
+    workgroup). RedshiftLoader must neutralize this on its own engine's
+    dialect instance."""
+    mock_engine = MagicMock()
+    mock_engine.dialect.name = "postgresql"
+    with patch("jira_ingest.loader.sqlalchemy_loader.create_engine", return_value=mock_engine):
+        RedshiftLoader("postgresql+psycopg2://user:pass@host:5439/db")
+
+    mock_engine.dialect._set_backslash_escapes(MagicMock())
+    assert mock_engine.dialect._backslash_escapes is False
+
+
+def test_redshift_loader_skips_backslash_escapes_patch_for_other_dialects() -> None:
+    ldr = RedshiftLoader("sqlite:///:memory:", schema=None)
+    assert not hasattr(ldr.engine.dialect, "_set_backslash_escapes")
+
+
 # ── Table creation ────────────────────────────────────────────────────────────
 
 
@@ -109,6 +130,32 @@ def test_build_metadata_default_still_uses_json_for_custom_fields() -> None:
     meta = build_metadata(schema=None)
     assert "custom_fields" in meta.tables["jira_issues"].c
     assert meta.tables["jira_issues"].c.custom_fields.type.__class__.__name__ == "JSON"
+
+
+def test_build_metadata_redshift_uses_bigint_not_int() -> None:
+    """pandas/PyArrow represent plain Python ints as 64-bit, so the S3 COPY
+    path's Parquet files always carry INT64 columns. Redshift's
+    COPY ... FORMAT AS PARQUET does strict type-matching and rejects an
+    INT64 source against an INTEGER (32-bit) target -- confirmed against a
+    real Redshift Serverless workgroup."""
+    meta = build_metadata(schema=None, redshift=True)
+    for table_name, column_name in [
+        ("jira_projects", "id"),
+        ("jira_releases", "release_id"),
+        ("jira_boards", "board_id"),
+        ("jira_issues", "id"),
+        ("jira_issues", "epic_id"),
+        ("jira_transitions", "transition_id"),
+    ]:
+        col_type = meta.tables[table_name].c[column_name].type
+        assert col_type.__class__.__name__ == "BigInteger", (
+            f"{table_name}.{column_name} is {col_type.__class__.__name__}, expected BigInteger"
+        )
+
+
+def test_build_metadata_default_still_uses_integer() -> None:
+    meta = build_metadata(schema=None)
+    assert meta.tables["jira_issues"].c.id.type.__class__.__name__ == "Integer"
 
 
 # ── Projects ──────────────────────────────────────────────────────────────────

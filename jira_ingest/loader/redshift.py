@@ -23,12 +23,22 @@ requires the destination type to match what the source produces for nested
 data. ``_prepare_batch`` JSON-encodes ``custom_fields`` to a string for the
 row-wise path, and ``_pg_upsert`` wraps it in ``JSON_PARSE()`` so Redshift
 stores it as parsed ``SUPER``, not a scalar string.
+
+Finally, SQLAlchemy's plain ``postgresql`` dialect probes
+``SHOW standard_conforming_strings`` the first time it connects (real
+PostgreSQL has supported this GUC since 8.1). Redshift doesn't recognize it
+and raises ``UndefinedObject: unrecognized configuration parameter``,
+breaking every connection before any query of ours runs. ``__init__``
+patches ``_set_backslash_escapes`` on this instance's engine dialect only
+(not the ``PGDialect`` class), confirmed against a real Redshift Serverless
+workgroup.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import types
 from typing import Any
 
 import fsspec
@@ -38,6 +48,10 @@ from jira_ingest.loader.sqlalchemy_loader import SQLAlchemyLoader
 from jira_ingest.loader.tables import TABLE_NAMES
 
 logger = logging.getLogger(__name__)
+
+
+def _no_backslash_escapes(dialect: Any, connection: Any) -> None:
+    dialect._backslash_escapes = False
 
 
 class RedshiftLoader(SQLAlchemyLoader):
@@ -64,6 +78,10 @@ class RedshiftLoader(SQLAlchemyLoader):
             database_url, schema=schema, batch_size=batch_size, echo=echo, redshift=True
         )
         self._iam_role = iam_role
+        if self._engine.dialect.name == "postgresql":
+            self._engine.dialect._set_backslash_escapes = types.MethodType(
+                _no_backslash_escapes, self._engine.dialect
+            )
 
     def _prepare_batch(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """JSON-encode ``custom_fields`` to a string; ``_pg_upsert`` parses it
