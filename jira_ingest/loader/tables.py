@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -57,15 +58,23 @@ def build_metadata(schema: str | None = None, redshift: bool = False) -> MetaDat
             no dialect ever relies on DB-generated ids) and
             ``jira_issues.custom_fields`` is declared as ``RedshiftSuper``
             instead of ``JSON`` (see ``RedshiftLoader`` for how both the
-            row-wise and S3 COPY paths populate it).
+            row-wise and S3 COPY paths populate it). All integer columns are
+            also declared ``BIGINT`` rather than ``INTEGER``: pandas/PyArrow
+            represent plain Python ints as 64-bit, so the S3 COPY path's
+            Parquet files always carry INT64 columns -- Redshift's
+            ``COPY ... FORMAT AS PARQUET`` does strict column-type matching
+            (unlike CSV) and rejects an INT64 source against an INTEGER
+            (32-bit) target with a Spectrum Scan Error, confirmed against a
+            real workgroup.
     """
     meta = MetaData(schema=schema)
     custom_fields_type = RedshiftSuper() if redshift else JSON
+    int_type = BigInteger if redshift else Integer
 
     Table(
         "jira_projects",
         meta,
-        Column("id", Integer, primary_key=True, autoincrement=False),
+        Column("id", int_type, primary_key=True, autoincrement=False),
         Column("key", String(32), nullable=False),
         Column("name", String(256)),
         Column("project_type_key", String(64)),
@@ -79,8 +88,8 @@ def build_metadata(schema: str | None = None, redshift: bool = False) -> MetaDat
     Table(
         "jira_releases",
         meta,
-        Column("release_id", Integer, primary_key=True, autoincrement=False),
-        Column("project_id", Integer, nullable=False),
+        Column("release_id", int_type, primary_key=True, autoincrement=False),
+        Column("project_id", int_type, nullable=False),
         Column("project_key", String(32)),
         Column("release_name", String(256)),
         Column("archived", Boolean, default=False),
@@ -92,8 +101,8 @@ def build_metadata(schema: str | None = None, redshift: bool = False) -> MetaDat
     Table(
         "jira_boards",
         meta,
-        Column("board_id", Integer, primary_key=True, autoincrement=False),
-        Column("project_id", Integer, nullable=False),
+        Column("board_id", int_type, primary_key=True, autoincrement=False),
+        Column("project_id", int_type, nullable=False),
         Column("name", String(256)),
         Column("board_type", String(32)),
     )
@@ -101,23 +110,23 @@ def build_metadata(schema: str | None = None, redshift: bool = False) -> MetaDat
     Table(
         "jira_issues",
         meta,
-        Column("id", Integer, primary_key=True, autoincrement=False),
+        Column("id", int_type, primary_key=True, autoincrement=False),
         Column("key", String(32), nullable=False),
-        Column("project_id", Integer),
+        Column("project_id", int_type),
         Column("project_key", String(32)),
         Column("project_name", String(256)),
-        Column("issuetype_id", Integer),
+        Column("issuetype_id", int_type),
         Column("issue_type", String(128)),
-        Column("parent_task_id", Integer),
+        Column("parent_task_id", int_type),
         Column("parent_task_key", String(32)),
         Column("priority", String(64)),
-        Column("priority_id", Integer),
-        Column("status_id", Integer),
+        Column("priority_id", int_type),
+        Column("status_id", int_type),
         Column("status_name", String(128)),
-        Column("status_category_id", Integer),
+        Column("status_category_id", int_type),
         Column("status_category_name", String(128)),
         Column("status_category_colour", String(64)),
-        Column("epic_id", Integer),
+        Column("epic_id", int_type),
         Column("epic_key", String(32)),
         Column("epic_name", String(256)),
         Column("epic_summary", String(1024)),
@@ -132,10 +141,10 @@ def build_metadata(schema: str | None = None, redshift: bool = False) -> MetaDat
     Table(
         "jira_transitions",
         meta,
-        Column("transition_id", Integer, nullable=False),
+        Column("transition_id", int_type, nullable=False),
         Column("transition_field", String(128), nullable=False),
         Column("transition_field_type", String(64)),
-        Column("issue_id", Integer, nullable=False),
+        Column("issue_id", int_type, nullable=False),
         Column("issue_key", String(32)),
         Column("hashed_author", String(64)),
         Column("created", DateTime(timezone=True)),
