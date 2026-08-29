@@ -98,7 +98,7 @@ def test_build_metadata_redshift_avoids_serial_and_json() -> None:
     issues_ddl = str(CreateTable(meta.tables["jira_issues"]).compile(dialect=postgresql.dialect()))
     assert "SERIAL" not in issues_ddl
     assert "JSON" not in issues_ddl
-    assert "custom_fields TEXT" in issues_ddl
+    assert "custom_fields SUPER" in issues_ddl
 
     for table_name in ("jira_projects", "jira_releases", "jira_boards"):
         ddl = str(CreateTable(meta.tables[table_name]).compile(dialect=postgresql.dialect()))
@@ -300,6 +300,28 @@ def test_redshift_loader_pg_upsert_uses_plain_insert_not_on_conflict() -> None:
 
     mock_table.insert.assert_called_once_with()
     mock_conn.execute.assert_called_once_with(mock_table.insert.return_value, records)
+    assert result == len(records)
+
+
+def test_redshift_loader_pg_upsert_wraps_custom_fields_in_json_parse() -> None:
+    """custom_fields is SUPER on Redshift; inserting the JSON string produced
+    by _prepare_batch without JSON_PARSE would store it as a scalar string,
+    not parsed SUPER data."""
+    ldr = _redshift_loader()
+    mock_conn = MagicMock()
+    mock_table = MagicMock()
+    records = [{"id": 1, "custom_fields": '{"foo": "bar"}'}]
+
+    result = ldr._pg_upsert(mock_conn, mock_table, records)
+
+    mock_table.insert.assert_called_once_with()
+    values_arg = mock_table.insert.return_value.values.call_args[0][0]
+    compiled = str(values_arg["custom_fields"].compile())
+    assert "json_parse" in compiled.lower()
+    assert str(values_arg["id"].compile()) != compiled
+    mock_conn.execute.assert_called_once_with(
+        mock_table.insert.return_value.values.return_value, records
+    )
     assert result == len(records)
 
 

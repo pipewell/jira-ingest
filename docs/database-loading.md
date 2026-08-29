@@ -21,7 +21,7 @@ For Redshift with an S3 sink the pipeline automatically switches to the native `
 | `jira_projects` | `id` | |
 | `jira_releases` | `release_id` | |
 | `jira_boards` | `board_id` | |
-| `jira_issues` | `id` | `custom_fields` stored as JSON/JSONB |
+| `jira_issues` | `id` | `custom_fields` stored as JSON/JSONB (Redshift: [`SUPER`](https://docs.aws.amazon.com/redshift/latest/dg/c_Supported_data_types.html), since Redshift has no JSON type) |
 | `jira_transitions` | `(transition_id, issue_id, transition_field)` | Composite unique constraint |
 
 The schema prefix (`--db-schema`) is applied to all table names.
@@ -96,11 +96,12 @@ COPY bronze.jira_issues
 FROM 's3://my-bucket/jira-ingest/issues/issues_20240601.parquet'
 IAM_ROLE 'arn:aws:iam::123456789012:role/RedshiftS3ReadRole'
 FORMAT AS PARQUET
+SERIALIZETOJSON
 COMPUPDATE OFF
 STATUPDATE OFF;
 ```
 
-`COMPUPDATE OFF STATUPDATE OFF` prevents the post-load compression analysis that Redshift runs on new tables by default -- without these flags a large initial load can take hours.
+`COMPUPDATE OFF STATUPDATE OFF` prevents the post-load compression analysis that Redshift runs on new tables by default -- without these flags a large initial load can take hours. `SERIALIZETOJSON` converts Parquet's nested struct columns (`custom_fields`) into the target `SUPER` column -- see AWS's guidance on [COPY from Parquet/ORC into SUPER](https://docs.aws.amazon.com/redshift/latest/dg/copy_json.html).
 
 ---
 

@@ -16,9 +16,9 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
-    Text,
     UniqueConstraint,
 )
+from sqlalchemy.types import UserDefinedType
 
 # Logical name -> physical table name
 TABLE_NAMES: dict[str, str] = {
@@ -30,6 +30,22 @@ TABLE_NAMES: dict[str, str] = {
 }
 
 
+class RedshiftSuper(UserDefinedType):
+    """Redshift's ``SUPER`` type: holds arbitrary semi-structured data.
+
+    Needed (rather than ``TEXT``) because the S3 COPY path loads Parquet's
+    nested struct columns via ``COPY ... SERIALIZETOJSON``, which only
+    targets ``SUPER`` columns -- Redshift's COPY requires the destination
+    column type to match what the Parquet/ORC source produces for nested
+    data. See ``RedshiftLoader.load_from_s3`` and ``RedshiftLoader._pg_upsert``.
+    """
+
+    cache_ok = True
+
+    def get_col_spec(self, **kw: object) -> str:
+        return "SUPER"
+
+
 def build_metadata(schema: str | None = None, redshift: bool = False) -> MetaData:
     """Return a MetaData object containing all Jira tables bound to ``schema``.
 
@@ -39,12 +55,12 @@ def build_metadata(schema: str | None = None, redshift: bool = False) -> MetaDat
             column type. When ``True``, integer primary keys are declared
             plain (every record already carries its own ``id`` from Jira, so
             no dialect ever relies on DB-generated ids) and
-            ``jira_issues.custom_fields`` is declared as ``TEXT`` instead of
-            ``JSON`` (see ``RedshiftLoader._prepare_batch`` for the matching
-            JSON-encode-on-insert step).
+            ``jira_issues.custom_fields`` is declared as ``RedshiftSuper``
+            instead of ``JSON`` (see ``RedshiftLoader`` for how both the
+            row-wise and S3 COPY paths populate it).
     """
     meta = MetaData(schema=schema)
-    custom_fields_type = Text if redshift else JSON
+    custom_fields_type = RedshiftSuper() if redshift else JSON
 
     Table(
         "jira_projects",

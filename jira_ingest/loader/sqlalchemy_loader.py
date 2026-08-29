@@ -109,7 +109,7 @@ class SQLAlchemyLoader(BaseLoader):
         """Hook for subclasses to adjust a batch just before it's inserted.
 
         No-op by default; ``RedshiftLoader`` overrides this to JSON-encode
-        ``custom_fields`` since Redshift stores it as ``TEXT``, not JSON.
+        ``custom_fields`` since Redshift stores it as ``SUPER``, not JSON.
         """
         return records
 

@@ -15,9 +15,14 @@ overridden below to fall back to a plain INSERT for this dialect.
 Redshift also lacks the ``SERIAL`` pseudo-type and any native JSON column
 type, both of which the generic table metadata otherwise uses when compiled
 against the ``postgresql`` dialect. ``build_metadata(redshift=True)`` (used
-below) declares plain integer primary keys and a ``TEXT`` column for
-``custom_fields`` instead; ``_prepare_batch`` below JSON-encodes that field
-to match.
+below) declares plain integer primary keys and a ``SUPER`` column for
+``custom_fields`` instead. ``SUPER`` (rather than ``TEXT``) is required
+because the S3 COPY path below loads Parquet's nested struct columns via
+``COPY ... SERIALIZETOJSON``, which only targets ``SUPER`` -- Redshift COPY
+requires the destination type to match what the source produces for nested
+data. ``_prepare_batch`` JSON-encodes ``custom_fields`` to a string for the
+row-wise path, and ``_pg_upsert`` wraps it in ``JSON_PARSE()`` so Redshift
+stores it as parsed ``SUPER``, not a scalar string.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ import logging
 from typing import Any
 
 import fsspec
-from sqlalchemy import text
+from sqlalchemy import bindparam, func, text
 
 from jira_ingest.loader.sqlalchemy_loader import SQLAlchemyLoader
 from jira_ingest.loader.tables import TABLE_NAMES
@@ -61,8 +66,8 @@ class RedshiftLoader(SQLAlchemyLoader):
         self._iam_role = iam_role
 
     def _prepare_batch(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """JSON-encode ``custom_fields``: Redshift has no JSON column type, so
-        ``build_metadata(redshift=True)`` declares it as ``TEXT`` instead."""
+        """JSON-encode ``custom_fields`` to a string; ``_pg_upsert`` parses it
+        back into ``SUPER`` via ``JSON_PARSE()`` on insert."""
         result = []
         for record in records:
             value = record.get("custom_fields")
@@ -78,15 +83,32 @@ class RedshiftLoader(SQLAlchemyLoader):
         Callers loading into Redshift without an S3 sink are responsible for
         their own idempotency (e.g. truncate-and-reload); use
         ``load_from_s3`` for large loads instead.
+
+        ``custom_fields`` (when present) is wrapped in ``JSON_PARSE()`` so
+        the JSON string from ``_prepare_batch`` lands as parsed ``SUPER``
+        data rather than a quoted scalar string.
         """
-        conn.execute(table.insert(), records)
+        if "custom_fields" in records[0]:
+            values = {
+                name: func.json_parse(bindparam("custom_fields"))
+                if name == "custom_fields"
+                else bindparam(name)
+                for name in records[0]
+            }
+            conn.execute(table.insert().values(values), records)
+        else:
+            conn.execute(table.insert(), records)
         return len(records)
 
     def load_from_s3(self, data_type: str, s3_prefix: str) -> None:
         """COPY all Parquet files under ``s3_prefix`` into the target table.
 
         This is substantially faster than the in-memory path for large datasets
-        because the data never passes through Python.
+        because the data never passes through Python. ``SERIALIZETOJSON``
+        converts Parquet's nested struct columns (e.g. ``jira_issues.custom_fields``,
+        written as a struct by ``ParquetWriter``) into the target ``SUPER``
+        column; without it, COPY rejects a nested source column with no
+        matching non-``SUPER`` destination type.
         """
         table_name = TABLE_NAMES.get(data_type)
         if not table_name:
@@ -100,6 +122,7 @@ class RedshiftLoader(SQLAlchemyLoader):
             FROM :s3_prefix
             IAM_ROLE :iam_role
             FORMAT AS PARQUET
+            SERIALIZETOJSON
             COMPUPDATE OFF
             STATUPDATE OFF
         """)
