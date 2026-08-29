@@ -148,9 +148,9 @@ def test_build_metadata_redshift_uses_bigint_not_int() -> None:
         ("jira_transitions", "transition_id"),
     ]:
         col_type = meta.tables[table_name].c[column_name].type
-        assert (
-            col_type.__class__.__name__ == "BigInteger"
-        ), f"{table_name}.{column_name} is {col_type.__class__.__name__}, expected BigInteger"
+        assert col_type.__class__.__name__ == "BigInteger", (
+            f"{table_name}.{column_name} is {col_type.__class__.__name__}, expected BigInteger"
+        )
 
 
 def test_build_metadata_default_still_uses_integer() -> None:
