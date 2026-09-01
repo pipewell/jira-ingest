@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pyarrow as pa
@@ -45,6 +46,43 @@ class TestSink:
         with sink.open("present.txt", "wb") as f:
             f.write(b"x")
         assert sink.exists("present.txt")
+
+    def test_write_or_append_appends_on_local_filesystem(self, tmp_path: Path) -> None:
+        sink = Sink(str(tmp_path))
+        sink.write_or_append("log.txt", b"first\n", file_exists=False)
+        sink.write_or_append("log.txt", b"second\n", file_exists=True)
+        assert (tmp_path / "log.txt").read_bytes() == b"first\nsecond\n"
+
+    def test_write_or_append_falls_back_for_non_native_append_protocol(
+        self, tmp_path: Path
+    ) -> None:
+        """gcsfs (protocol 'gs'/'gcs') has no append primitive and silently
+        rewrites 'ab' to 'wb', discarding prior content. write_or_append must
+        detect this and manually read-then-rewrite instead of trusting a
+        plain 'ab' open for any protocol not known to genuinely append."""
+        fake_fs = MagicMock()
+        fake_fs.protocol = ("gs", "gcs")
+        fake_fs.cat.return_value = b"first\n"
+
+        sink = Sink(str(tmp_path))
+        with patch("jira_ingest.output.sink.fsspec.core.url_to_fs", return_value=(fake_fs, "")):
+            sink.write_or_append("log.txt", b"second\n", file_exists=True)
+
+        fake_fs.cat.assert_called_once()
+        assert (tmp_path / "log.txt").read_bytes() == b"first\nsecond\n"
+
+    def test_write_or_append_skips_fallback_when_file_does_not_exist(self, tmp_path: Path) -> None:
+        """No prior content to preserve, so this should be a plain write even
+        on a non-native-append protocol -- no need to call cat() at all."""
+        fake_fs = MagicMock()
+        fake_fs.protocol = "gs"
+
+        sink = Sink(str(tmp_path))
+        with patch("jira_ingest.output.sink.fsspec.core.url_to_fs", return_value=(fake_fs, "")):
+            sink.write_or_append("new.txt", b"first\n", file_exists=False)
+
+        fake_fs.cat.assert_not_called()
+        assert (tmp_path / "new.txt").read_bytes() == b"first\n"
 
 
 class TestCsvWriter:
