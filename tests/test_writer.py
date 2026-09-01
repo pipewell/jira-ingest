@@ -177,6 +177,25 @@ class TestParquetWriter:
         df = pd.read_parquet(tmp_path / "projects" / "projects_20240601.parquet")
         assert list(df["key"]) == ["PROJ-1", "PROJ-2"]
 
+    def test_empty_custom_fields_round_trips_as_null_not_fabricated_data(
+        self, tmp_path: Path
+    ) -> None:
+        """custom_fields defaults to {} when no custom fields are configured
+        -- the common case, not an edge case. PyArrow can't write a
+        zero-field struct<> to Parquet at all, but the placeholder used to
+        work around that must not fabricate a value: {"_empty": null} would
+        persist through Parquet and into Redshift's SUPER column via COPY
+        ... SERIALIZETOJSON, so consumers would see a field that was never
+        actually in custom_fields instead of the original {}."""
+        records = [{"id": i, "key": f"PROJ-{i}", "custom_fields": {}} for i in range(1, 3)]
+        writer = ParquetWriter()
+        sink = Sink(str(tmp_path))
+        writer.write("issues", records, sink, "20240601")
+
+        table = pq.read_table(tmp_path / "issues" / "issues_20240601.parquet")
+        assert pa.types.is_struct(table.schema.field("custom_fields").type)
+        assert table.column("custom_fields").to_pylist() == [None, None]
+
 
 class TestJsonLinesWriter:
     def test_writes_ndjson(self, tmp_path: Path) -> None:

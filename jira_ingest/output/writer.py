@@ -108,15 +108,20 @@ def _fix_empty_struct_columns(table: pa.Table) -> pa.Table:
     fields, not a rare edge case. Confirmed independently of Redshift: this
     crashes ``pq.write_table`` for every sink.
 
-    Adding a placeholder field keeps the column a struct (so a later batch
-    that does have data uses the same nested-struct-then-SERIALIZETOJSON
-    path already verified against a real Redshift Serverless workgroup)
-    while letting an all-empty batch round-trip through Parquet at all.
+    A placeholder field keeps the column a struct (so a later batch that
+    does have data uses the same nested-struct-then-SERIALIZETOJSON path
+    already verified against a real Redshift Serverless workgroup) while
+    letting an all-empty batch round-trip through Parquet at all -- but
+    every row's value must be a top-level NULL, not an instantiated struct
+    like ``{"_empty": null}``. The latter is fabricated data: it would
+    persist through Parquet and into Redshift's SUPER column via
+    SERIALIZETOJSON, so consumers would see a field that was never actually
+    present in ``custom_fields`` instead of the original ``{}``.
     """
     for index, field in enumerate(table.schema):
         if pa.types.is_struct(field.type) and field.type.num_fields == 0:
             placeholder_type = pa.struct([pa.field("_empty", pa.bool_())])
-            values = pa.array([{"_empty": None}] * table.num_rows, type=placeholder_type)
+            values = pa.array([None] * table.num_rows, type=placeholder_type)
             table = table.set_column(index, pa.field(field.name, placeholder_type), values)
     return table
 
