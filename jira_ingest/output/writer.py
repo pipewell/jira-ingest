@@ -142,6 +142,11 @@ class CsvWriter(BaseWriter):
 
     Each call appends to the target file (creating it with a header row on
     first write). Thread-safe at the file level via the sink's atomic open.
+
+    Appending works correctly even on backends with no real append
+    primitive (e.g. GCS -- see ``Sink.write_or_append``): the writer only
+    decides whether to emit a header row, and delegates the actual
+    append-or-fallback logic to the sink.
     """
 
     def write(
@@ -168,9 +173,7 @@ class CsvWriter(BaseWriter):
             writer.writeheader()
         writer.writerows(records)
 
-        mode = "ab" if file_exists else "wb"
-        with sink.open(path, mode) as f:
-            f.write(buf.getvalue().encode("utf-8"))
+        sink.write_or_append(path, buf.getvalue().encode("utf-8"), file_exists)
 
         logger.info("CSV: wrote %d rows -> %s", len(records), sink.full_path(path))
 
@@ -230,9 +233,7 @@ class JsonLinesWriter(BaseWriter):
 
         lines = "\n".join(json.dumps(r, default=str) for r in records) + "\n"
 
-        mode = "ab" if file_exists else "wb"
-        with sink.open(path, mode) as f:
-            f.write(lines.encode("utf-8"))
+        sink.write_or_append(path, lines.encode("utf-8"), file_exists)
 
         logger.info("JSONL: wrote %d rows -> %s", len(records), sink.full_path(path))
 
