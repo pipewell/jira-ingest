@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pipewell-jira-ingest"
-version = "1.0.1"
+version = "1.0.2"
 description = "Async Jira data pipeline supporting Cloud and Data Center, with pluggable multi-protocol output"
 readme = "README.md"
 requires-python = ">=3.11"
