@@ -57,13 +57,6 @@ class Sink:
         fs, _ = fsspec.core.url_to_fs(path, **self._storage_options)
         return bool(fs.exists(path))
 
-    def _supports_native_append(self, relative_path: str) -> bool:
-        path = self.full_path(relative_path)
-        fs, _ = fsspec.core.url_to_fs(path, **self._storage_options)
-        protocol = fs.protocol
-        protocols = {protocol} if isinstance(protocol, str) else set(protocol)
-        return bool(protocols & _NATIVE_APPEND_PROTOCOLS)
-
     def write_or_append(self, relative_path: str, data: bytes, file_exists: bool) -> None:
         """Write ``data``, appending to an existing file rather than
         overwriting it, working correctly even on backends with no real
@@ -73,14 +66,21 @@ class Sink:
         since callers (CsvWriter, JsonLinesWriter) already need to know it
         to decide whether to write a header row.
         """
-        if not file_exists or self._supports_native_append(relative_path):
-            mode = "ab" if file_exists else "wb"
-            with self.open(relative_path, mode) as f:
+        if not file_exists:
+            with self.open(relative_path, "wb") as f:
                 f.write(data)
             return
 
         path = self.full_path(relative_path)
         fs, _ = fsspec.core.url_to_fs(path, **self._storage_options)
+        protocol = fs.protocol
+        protocols = {protocol} if isinstance(protocol, str) else set(protocol)
+
+        if protocols & _NATIVE_APPEND_PROTOCOLS:
+            with self.open(relative_path, "ab") as f:
+                f.write(data)
+            return
+
         existing = fs.cat(path)
         with self.open(relative_path, "wb") as f:
             f.write(existing + data)
