@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pyarrow as pa
@@ -13,7 +12,13 @@ import pyarrow.parquet as pq
 import pytest
 
 from jira_ingest.output.sink import Sink
-from jira_ingest.output.writer import CsvWriter, JsonLinesWriter, ParquetWriter, create_writer
+from jira_ingest.output.writer import (
+    BatchWriter,
+    CsvWriter,
+    JsonLinesWriter,
+    ParquetWriter,
+    create_writer,
+)
 
 SAMPLE_RECORDS = [
     {"id": 1, "key": "PROJ-1", "summary": "Alpha", "labels": "backend"},
@@ -21,11 +26,32 @@ SAMPLE_RECORDS = [
 ]
 
 
+def _parts(tmp_path: Path, data_type: str, date_suffix: str, extension: str) -> list[Path]:
+    directory = tmp_path / data_type / f"{data_type}_{date_suffix}"
+    if not directory.exists():
+        return []
+    return sorted(directory.glob(f"part-*.{extension}"))
+
+
+def _read_all_csv_rows(parts: list[Path]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for part in parts:
+        rows.extend(csv.DictReader(part.open()))
+    return rows
+
+
+def _read_all_jsonl_lines(parts: list[Path]) -> list[dict[str, object]]:
+    lines: list[dict[str, object]] = []
+    for part in parts:
+        lines.extend(json.loads(line) for line in part.read_text().splitlines() if line.strip())
+    return lines
+
+
 class TestSink:
     def test_full_path_joins_uri_and_relative(self, tmp_path: Path) -> None:
         sink = Sink(str(tmp_path))
-        expected = f"{tmp_path}/issues/issues_20240601.csv"
-        assert sink.full_path("issues/issues_20240601.csv") == expected
+        expected = f"{tmp_path}/issues/issues_20240601/part-abc.csv"
+        assert sink.full_path("issues/issues_20240601/part-abc.csv") == expected
 
     def test_trailing_slash_on_uri_is_normalised(self, tmp_path: Path) -> None:
         sink = Sink(str(tmp_path) + "/")
@@ -47,53 +73,44 @@ class TestSink:
             f.write(b"x")
         assert sink.exists("present.txt")
 
-    def test_write_or_append_appends_on_local_filesystem(self, tmp_path: Path) -> None:
+    def test_clear_directory_is_noop_when_nothing_exists(self, tmp_path: Path) -> None:
         sink = Sink(str(tmp_path))
-        sink.write_or_append("log.txt", b"first\n", file_exists=False)
-        sink.write_or_append("log.txt", b"second\n", file_exists=True)
-        assert (tmp_path / "log.txt").read_bytes() == b"first\nsecond\n"
+        sink.clear_directory("issues/issues_20240601")  # must not raise
 
-    def test_write_or_append_falls_back_for_non_native_append_protocol(
-        self, tmp_path: Path
-    ) -> None:
-        """gcsfs (protocol 'gs'/'gcs') has no append primitive and silently
-        rewrites 'ab' to 'wb', discarding prior content. write_or_append must
-        detect this and manually read-then-rewrite instead of trusting a
-        plain 'ab' open for any protocol not known to genuinely append."""
-        fake_fs = MagicMock()
-        fake_fs.protocol = ("gs", "gcs")
-        fake_fs.cat.return_value = b"first\n"
-
+    def test_clear_directory_removes_existing_files(self, tmp_path: Path) -> None:
         sink = Sink(str(tmp_path))
-        with patch("jira_ingest.output.sink.fsspec.core.url_to_fs", return_value=(fake_fs, "")):
-            sink.write_or_append("log.txt", b"second\n", file_exists=True)
+        with sink.open("issues/issues_20240601/part-1.csv") as f:
+            f.write(b"a")
+        with sink.open("issues/issues_20240601/part-2.csv") as f:
+            f.write(b"b")
 
-        fake_fs.cat.assert_called_once()
-        assert (tmp_path / "log.txt").read_bytes() == b"first\nsecond\n"
+        sink.clear_directory("issues/issues_20240601")
 
-    def test_write_or_append_skips_fallback_when_file_does_not_exist(self, tmp_path: Path) -> None:
-        """No prior content to preserve, so this should be a plain write even
-        on a non-native-append protocol -- no need to call cat() at all."""
-        fake_fs = MagicMock()
-        fake_fs.protocol = "gs"
+        assert not (tmp_path / "issues" / "issues_20240601" / "part-1.csv").exists()
+        assert not (tmp_path / "issues" / "issues_20240601" / "part-2.csv").exists()
 
+    def test_clear_directory_does_not_touch_other_date_suffixes(self, tmp_path: Path) -> None:
         sink = Sink(str(tmp_path))
-        with patch("jira_ingest.output.sink.fsspec.core.url_to_fs", return_value=(fake_fs, "")):
-            sink.write_or_append("new.txt", b"first\n", file_exists=False)
+        with sink.open("issues/issues_20240601/part-1.csv") as f:
+            f.write(b"old-run")
+        with sink.open("issues/issues_20240602/part-1.csv") as f:
+            f.write(b"different-day")
 
-        fake_fs.cat.assert_not_called()
-        assert (tmp_path / "new.txt").read_bytes() == b"first\n"
+        sink.clear_directory("issues/issues_20240601")
+
+        assert not (tmp_path / "issues" / "issues_20240601" / "part-1.csv").exists()
+        assert (tmp_path / "issues" / "issues_20240602" / "part-1.csv").exists()
 
 
 class TestCsvWriter:
-    def test_writes_records_with_header(self, tmp_path: Path) -> None:
+    def test_writes_one_part_with_header(self, tmp_path: Path) -> None:
         writer = CsvWriter()
         sink = Sink(str(tmp_path))
         writer.write("issues", SAMPLE_RECORDS, sink, "20240601")
 
-        path = tmp_path / "issues" / "issues_20240601.csv"
-        assert path.exists()
-        rows = list(csv.DictReader(path.open()))
+        parts = _parts(tmp_path, "issues", "20240601", "csv")
+        assert len(parts) == 1
+        rows = _read_all_csv_rows(parts)
         assert len(rows) == 2
         assert rows[0]["key"] == "PROJ-1"
 
@@ -101,28 +118,43 @@ class TestCsvWriter:
         writer = CsvWriter()
         sink = Sink(str(tmp_path))
         writer.write("issues", [], sink, "20240601")
-        assert not (tmp_path / "issues" / "issues_20240601.csv").exists()
+        assert _parts(tmp_path, "issues", "20240601", "csv") == []
 
-    def test_appends_on_second_call(self, tmp_path: Path) -> None:
+    def test_each_call_writes_a_new_independent_part(self, tmp_path: Path) -> None:
+        """Each part is self-contained (own header), unlike the old
+        single-file-append design -- readers concatenate multiple
+        independently-readable CSVs, the same way Spark/Hive parts work."""
         writer = CsvWriter()
         sink = Sink(str(tmp_path))
         writer.write("issues", SAMPLE_RECORDS[:1], sink, "20240601")
         writer.write("issues", SAMPLE_RECORDS[1:], sink, "20240601")
 
-        path = tmp_path / "issues" / "issues_20240601.csv"
-        rows = list(csv.DictReader(path.open()))
-        assert len(rows) == 2
+        parts = _parts(tmp_path, "issues", "20240601", "csv")
+        assert len(parts) == 2
+        for part in parts:
+            assert part.read_text().startswith("id,key,summary,labels")
+        assert _read_all_csv_rows(parts) and len(_read_all_csv_rows(parts)) == 2
+
+    def test_part_names_are_unique(self, tmp_path: Path) -> None:
+        writer = CsvWriter()
+        sink = Sink(str(tmp_path))
+        writer.write("issues", SAMPLE_RECORDS, sink, "20240601")
+        writer.write("issues", SAMPLE_RECORDS, sink, "20240601")
+
+        parts = _parts(tmp_path, "issues", "20240601", "csv")
+        assert len(parts) == 2
+        assert parts[0].name != parts[1].name
 
 
 class TestParquetWriter:
-    def test_writes_valid_parquet(self, tmp_path: Path) -> None:
+    def test_writes_one_part(self, tmp_path: Path) -> None:
         writer = ParquetWriter()
         sink = Sink(str(tmp_path))
         writer.write("projects", SAMPLE_RECORDS, sink, "20240601")
 
-        path = tmp_path / "projects" / "projects_20240601.parquet"
-        assert path.exists()
-        df = pd.read_parquet(path)
+        parts = _parts(tmp_path, "projects", "20240601", "parquet")
+        assert len(parts) == 1
+        df = pd.read_parquet(parts[0])
         assert len(df) == 2
         assert "key" in df.columns
 
@@ -130,7 +162,18 @@ class TestParquetWriter:
         writer = ParquetWriter()
         sink = Sink(str(tmp_path))
         writer.write("projects", [], sink, "20240601")
-        assert not (tmp_path / "projects" / "projects_20240601.parquet").exists()
+        assert _parts(tmp_path, "projects", "20240601", "parquet") == []
+
+    def test_each_call_writes_a_new_independent_part(self, tmp_path: Path) -> None:
+        writer = ParquetWriter()
+        sink = Sink(str(tmp_path))
+        writer.write("projects", SAMPLE_RECORDS[:1], sink, "20240601")
+        writer.write("projects", SAMPLE_RECORDS[1:], sink, "20240601")
+
+        parts = _parts(tmp_path, "projects", "20240601", "parquet")
+        assert len(parts) == 2
+        total_rows = sum(len(pd.read_parquet(p)) for p in parts)
+        assert total_rows == 2
 
     def test_all_null_optional_columns_get_typed_not_null_type(self, tmp_path: Path) -> None:
         """Redshift's COPY ... FORMAT AS PARQUET does strict column-type
@@ -159,7 +202,8 @@ class TestParquetWriter:
         sink = Sink(str(tmp_path))
         writer.write("issues", records, sink, "20240601")
 
-        schema = pq.read_schema(tmp_path / "issues" / "issues_20240601.parquet")
+        parts = _parts(tmp_path, "issues", "20240601", "parquet")
+        schema = pq.read_schema(parts[0])
         assert not pa.types.is_null(schema.field("epic_id").type)
         assert pa.types.is_integer(schema.field("epic_id").type)
         assert not pa.types.is_null(schema.field("epic_done").type)
@@ -174,7 +218,8 @@ class TestParquetWriter:
         sink = Sink(str(tmp_path))
         writer.write("projects", SAMPLE_RECORDS, sink, "20240601")
 
-        df = pd.read_parquet(tmp_path / "projects" / "projects_20240601.parquet")
+        parts = _parts(tmp_path, "projects", "20240601", "parquet")
+        df = pd.read_parquet(parts[0])
         assert list(df["key"]) == ["PROJ-1", "PROJ-2"]
 
     def test_empty_custom_fields_round_trips_as_null_not_fabricated_data(
@@ -192,32 +237,33 @@ class TestParquetWriter:
         sink = Sink(str(tmp_path))
         writer.write("issues", records, sink, "20240601")
 
-        table = pq.read_table(tmp_path / "issues" / "issues_20240601.parquet")
+        parts = _parts(tmp_path, "issues", "20240601", "parquet")
+        table = pq.read_table(parts[0])
         assert pa.types.is_struct(table.schema.field("custom_fields").type)
         assert table.column("custom_fields").to_pylist() == [None, None]
 
 
 class TestJsonLinesWriter:
-    def test_writes_ndjson(self, tmp_path: Path) -> None:
+    def test_writes_one_part(self, tmp_path: Path) -> None:
         writer = JsonLinesWriter()
         sink = Sink(str(tmp_path))
         writer.write("boards", SAMPLE_RECORDS, sink, "20240601")
 
-        path = tmp_path / "boards" / "boards_20240601.jsonl"
-        assert path.exists()
-        lines = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+        parts = _parts(tmp_path, "boards", "20240601", "jsonl")
+        assert len(parts) == 1
+        lines = _read_all_jsonl_lines(parts)
         assert len(lines) == 2
         assert lines[0]["key"] == "PROJ-1"
 
-    def test_appends_on_second_call(self, tmp_path: Path) -> None:
+    def test_each_call_writes_a_new_independent_part(self, tmp_path: Path) -> None:
         writer = JsonLinesWriter()
         sink = Sink(str(tmp_path))
         writer.write("boards", SAMPLE_RECORDS[:1], sink, "20240601")
         writer.write("boards", SAMPLE_RECORDS[1:], sink, "20240601")
 
-        path = tmp_path / "boards" / "boards_20240601.jsonl"
-        lines = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-        assert len(lines) == 2
+        parts = _parts(tmp_path, "boards", "20240601", "jsonl")
+        assert len(parts) == 2
+        assert len(_read_all_jsonl_lines(parts)) == 2
 
 
 class TestCreateWriter:
@@ -233,3 +279,81 @@ class TestCreateWriter:
     def test_unknown_format_raises(self) -> None:
         with pytest.raises(ValueError, match="Unsupported"):
             create_writer("excel")  # type: ignore[arg-type]
+
+
+class TestBatchWriter:
+    def test_buffers_below_threshold_until_flush_all(self, tmp_path: Path) -> None:
+        writer = CsvWriter()
+        sink = Sink(str(tmp_path))
+        bw = BatchWriter(writer, sink, "20240601", max_records=10)
+
+        bw.add("issues", SAMPLE_RECORDS)
+        assert _parts(tmp_path, "issues", "20240601", "csv") == []
+
+        bw.flush_all()
+        parts = _parts(tmp_path, "issues", "20240601", "csv")
+        assert len(parts) == 1
+        assert len(_read_all_csv_rows(parts)) == 2
+
+    def test_flushes_automatically_once_threshold_reached(self, tmp_path: Path) -> None:
+        writer = CsvWriter()
+        sink = Sink(str(tmp_path))
+        bw = BatchWriter(writer, sink, "20240601", max_records=2)
+
+        bw.add("issues", SAMPLE_RECORDS)  # exactly at threshold -> flush immediately
+        parts = _parts(tmp_path, "issues", "20240601", "csv")
+        assert len(parts) == 1
+        assert len(_read_all_csv_rows(parts)) == 2
+
+    def test_many_small_yields_accumulate_into_one_part_not_many(self, tmp_path: Path) -> None:
+        """stream_all yields exactly one record at a time for e.g. 'projects'
+        and 'boards' -- flushing on every add() would produce mostly
+        one-row part files. Buffering up to the threshold avoids that."""
+        writer = CsvWriter()
+        sink = Sink(str(tmp_path))
+        bw = BatchWriter(writer, sink, "20240601", max_records=100)
+
+        for record in SAMPLE_RECORDS * 10:  # 20 single-record adds
+            bw.add("projects", [record])
+        bw.flush_all()
+
+        parts = _parts(tmp_path, "projects", "20240601", "csv")
+        assert len(parts) == 1
+        assert len(_read_all_csv_rows(parts)) == 20
+
+    def test_flush_all_only_touches_data_types_with_buffered_records(self, tmp_path: Path) -> None:
+        writer = CsvWriter()
+        sink = Sink(str(tmp_path))
+        bw = BatchWriter(writer, sink, "20240601", max_records=100)
+
+        bw.add("issues", SAMPLE_RECORDS)
+        bw.flush_all()
+
+        assert _parts(tmp_path, "issues", "20240601", "csv") != []
+        assert _parts(tmp_path, "boards", "20240601", "csv") == []
+
+    def test_clear_previous_removes_prior_parts_for_enabled_data_types_only(
+        self, tmp_path: Path
+    ) -> None:
+        writer = CsvWriter()
+        sink = Sink(str(tmp_path))
+        with sink.open("issues/issues_20240601/part-old.csv") as f:
+            f.write(b"stale-run")
+        with sink.open("boards/boards_20240601/part-old.csv") as f:
+            f.write(b"unrelated-data-type")
+
+        bw = BatchWriter(writer, sink, "20240601", max_records=100)
+        bw.clear_previous(["issues"])
+
+        assert not (tmp_path / "issues" / "issues_20240601" / "part-old.csv").exists()
+        assert (tmp_path / "boards" / "boards_20240601" / "part-old.csv").exists()
+
+    def test_add_with_empty_records_does_not_create_a_buffer(self, tmp_path: Path) -> None:
+        writer = CsvWriter()
+        sink = Sink(str(tmp_path))
+        bw = BatchWriter(writer, sink, "20240601", max_records=10)
+
+        bw.add("issues", [])
+        bw.flush_all()
+
+        assert _parts(tmp_path, "issues", "20240601", "csv") == []

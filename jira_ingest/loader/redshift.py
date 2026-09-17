@@ -152,15 +152,20 @@ class RedshiftLoader(SQLAlchemyLoader):
     def load_all_from_s3(self, s3_sink_uri: str, date_suffix: str) -> None:
         """COPY all data types from an S3 sink for a given date suffix.
 
-        Data types that produced zero records never get a Parquet file
-        written by ``ParquetWriter``, so those are skipped here rather than
-        issuing a COPY against a nonexistent key (which would fail and abort
-        the whole load).
+        ``ParquetWriter`` writes each data type as a directory of one or
+        more part files (``{data_type}/{data_type}_{date_suffix}/part-*.parquet``),
+        not a single file -- Redshift's COPY natively loads every object
+        under a prefix in parallel, so the directory itself is the prefix
+        passed to ``load_from_s3``.
+
+        Data types that produced zero records never get any part file
+        written, so those are skipped here rather than issuing a COPY
+        against an empty prefix (which would fail and abort the whole load).
         """
         for data_type in TABLE_NAMES:
-            prefix = f"{s3_sink_uri.rstrip('/')}/{data_type}/{data_type}_{date_suffix}.parquet"
+            prefix = f"{s3_sink_uri.rstrip('/')}/{data_type}/{data_type}_{date_suffix}/"
             fs, _ = fsspec.core.url_to_fs(prefix)
-            if not fs.exists(prefix):
-                logger.info("Skipping COPY for %s: no file at %s", data_type, prefix)
+            if not fs.find(prefix):
+                logger.info("Skipping COPY for %s: no files under %s", data_type, prefix)
                 continue
             self.load_from_s3(data_type, prefix)

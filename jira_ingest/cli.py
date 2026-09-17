@@ -12,7 +12,7 @@ import click
 from jira_ingest.client import create_client
 from jira_ingest.config import Settings
 from jira_ingest.output.sink import Sink
-from jira_ingest.output.writer import create_writer
+from jira_ingest.output.writer import BatchWriter, create_writer
 from jira_ingest.processor import stream_all
 from jira_ingest.utils import configure_logging
 
@@ -50,6 +50,19 @@ def cli() -> None:
     ),
     envvar="REDSHIFT_IAM_ROLE",
 )
+@click.option(
+    "--append",
+    is_flag=True,
+    default=False,
+    help=(
+        "Add to an existing --date-suffix's output instead of replacing it. "
+        "Default (off) clears that date_suffix's parts first, so a completed "
+        "run's output represents exactly that run. Pass this to deliberately "
+        "split one day's ingest across multiple runs that should fold "
+        "together -- not intended for retrying a crashed run, since a retry "
+        "would then duplicate whatever the crashed run already wrote."
+    ),
+)
 def run(
     env_file: str,
     start_date: str | None,
@@ -58,6 +71,7 @@ def run(
     database_url: str | None,
     db_schema: str | None,
     redshift_iam_role: str,
+    append: bool,
 ) -> None:
     """Fetch all Jira data and write to the configured sink."""
     settings = Settings(_env_file=env_file)  # type: ignore[call-arg]
@@ -74,10 +88,14 @@ def run(
         settings.sink_uri,
     )
 
-    # Accumulate all records in memory: the file writers need every record for a
-    # data type in one call (Parquet has no cheap append), and the database
-    # loader below needs the full set too.
-    all_records: dict[str, list[dict[str, object]]] = {}
+    batch_writer = BatchWriter(writer, sink, suffix, settings.part_file_max_records)
+    if not append:
+        batch_writer.clear_previous(settings.data_types)
+
+    # The database-loading path (non-Redshift-S3-COPY) needs every record for
+    # a data type in one call, unlike the part-file writer above -- only
+    # accumulate this when it'll actually be used.
+    all_records: dict[str, list[dict[str, object]]] | None = {} if database_url else None
 
     async def _run() -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -89,18 +107,19 @@ def run(
                 end_date=end_date,
             ):
                 counts[data_type] = counts.get(data_type, 0) + len(records)
-                all_records.setdefault(data_type, []).extend(records)
+                batch_writer.add(data_type, records)
+                if all_records is not None:
+                    all_records.setdefault(data_type, []).extend(records)
         return counts
 
     counts = asyncio.run(_run())
-
-    for data_type, records in all_records.items():
-        writer.write(data_type, records, sink, suffix)
+    batch_writer.flush_all()
 
     for data_type, n in sorted(counts.items()):
         click.echo(f"  {data_type}: {n:,} records")
 
     if database_url:
+        assert all_records is not None
         _load_database(database_url, db_schema, redshift_iam_role, all_records, settings, suffix)
 
 

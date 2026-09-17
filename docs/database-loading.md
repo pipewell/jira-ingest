@@ -93,7 +93,7 @@ When `--redshift-iam-role` is supplied and `JIRA_SINK_URI` starts with `s3://`, 
 
 ```sql
 COPY bronze.jira_issues
-FROM 's3://my-bucket/jira-ingest/issues/issues_20240601.parquet'
+FROM 's3://my-bucket/jira-ingest/issues/issues_20240601/'
 IAM_ROLE 'arn:aws:iam::123456789012:role/RedshiftS3ReadRole'
 FORMAT AS PARQUET
 SERIALIZETOJSON
@@ -101,7 +101,11 @@ COMPUPDATE OFF
 STATUPDATE OFF;
 ```
 
+Note the trailing `/` -- `ParquetWriter` writes each data type as a directory of one or more part files (see [Output sinks](sinks.md#output-layout)), not a single file, and Redshift's `COPY` loads every object under a prefix in parallel, so this is faster than loading one file, not just a workaround for the new layout. Data types that produced zero records never get any part file written, so those are skipped rather than issuing a `COPY` against an empty prefix.
+
 `COMPUPDATE OFF STATUPDATE OFF` prevents the post-load compression analysis that Redshift runs on new tables by default -- without these flags a large initial load can take hours. `SERIALIZETOJSON` converts Parquet's nested struct columns (`custom_fields`) into the target `SUPER` column -- see AWS's guidance on [COPY from Parquet/ORC into SUPER](https://docs.aws.amazon.com/redshift/latest/dg/copy_json.html).
+
+**Re-running the same `--date-suffix`:** by default, `jira-ingest run` clears a date's existing part files before writing new ones (see [Output sinks](sinks.md#output-layout)), so a subsequent `COPY` against that prefix only ever loads one run's worth of data. If you pass `--append` to accumulate multiple runs' parts instead, be aware that Redshift's `COPY` has no deduplication at all (unlike the row-wise INSERT path's `ON CONFLICT DO NOTHING` for plain PostgreSQL) -- COPY-ing a prefix containing more than one run's data will insert every row from every run, duplicates included.
 
 ---
 

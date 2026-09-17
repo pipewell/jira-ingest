@@ -60,6 +60,7 @@ All settings are read from environment variables (or a `.env` file) with the pre
 | `JIRA_OUTPUT_FORMAT` | `parquet` | `parquet`, `csv`, or `jsonl` |
 | `JIRA_SINK_URI` | `./output` | fsspec URI for output destination |
 | `JIRA_SINK_OPTIONS` | `{}` | JSON dict of auth options forwarded to fsspec |
+| `JIRA_PART_FILE_MAX_RECORDS` | `10000` | Row-count threshold per data type before flushing a new part file |
 | `JIRA_CUSTOM_FIELDS` | `{}` | JSON dict mapping logical name to Jira field ID |
 | `JIRA_LOG_LEVEL` | `INFO` | Log verbosity |
 | `DATABASE_URL` | | SQLAlchemy URL to load into a database after writing |
@@ -78,6 +79,8 @@ jira-ingest run [OPTIONS]
   --database-url TEXT        SQLAlchemy URL to load into a database
   --db-schema TEXT           Target database schema
   --redshift-iam-role TEXT   IAM role ARN for Redshift S3 COPY
+  --append                   Add to an existing --date-suffix's output
+                              instead of replacing it (default: replace)
 
 jira-ingest validate [OPTIONS]
 
@@ -86,13 +89,17 @@ jira-ingest validate [OPTIONS]
 
 ## Output layout
 
+Each data type is written as a directory of part files, not one single file
+-- see [Output sinks](docs/sinks.md#output-layout) for why and for the
+`--append` / replace-on-rerun semantics:
+
 ```
 {JIRA_SINK_URI}/
-  issues/issues_{date}.parquet
-  projects/projects_{date}.parquet
-  releases/releases_{date}.parquet
-  boards/boards_{date}.parquet
-  transitions/transitions_{date}.parquet
+  issues/issues_{date}/part-<uuid>.parquet
+  projects/projects_{date}/part-<uuid>.parquet
+  releases/releases_{date}/part-<uuid>.parquet
+  boards/boards_{date}/part-<uuid>.parquet
+  transitions/transitions_{date}/part-<uuid>.parquet
 ```
 
 ## Development

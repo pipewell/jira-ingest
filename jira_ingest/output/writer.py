@@ -1,8 +1,23 @@
 """Format writers: CSV, Parquet, JSON Lines.
 
 Each writer receives a ``Sink`` (which handles the destination protocol) and
-streams records into the appropriate format. Writers do not care whether the
-sink points at a local path, S3, Azure Blob, GCS, or anything else.
+writes one batch of records as one self-contained "part" file per ``write()``
+call -- ``{data_type}/{data_type}_{date_suffix}/part-<uuid>.{ext}``, never a
+single file appended or overwritten across calls. Writers do not care
+whether the sink points at a local path, S3, Azure Blob, GCS, or anything
+else.
+
+Each part is fully finalized (schema/footer, or header + rows, written) the
+moment its single write call returns -- there is no held-open state, so a
+crash between two ``write()`` calls leaves every previously-written part
+valid and readable; only the batch that hadn't been written yet is lost.
+This is why multiple parts, not one appended/overwritten file: appending to
+Parquet isn't really possible without holding a writer open across the
+whole run (and an interrupted stream has no footer, so it's unreadable
+garbage, not partial-but-useful data), and GCS has no cheap append
+primitive at all (see the removed ``Sink.write_or_append``) -- but every
+backend, including GCS, trivially supports writing one more small,
+independent file.
 
 Usage::
 
@@ -19,6 +34,7 @@ import json
 import logging
 import types
 import typing
+import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Literal
@@ -138,21 +154,17 @@ class BaseWriter(ABC):
         date_suffix: str,
     ) -> None: ...
 
-    def _path(self, data_type: str, date_suffix: str, extension: str) -> str:
-        return f"{data_type}/{data_type}_{date_suffix}.{extension}"
+    def _directory(self, data_type: str, date_suffix: str) -> str:
+        return f"{data_type}/{data_type}_{date_suffix}"
+
+    def _part_path(self, data_type: str, date_suffix: str, extension: str) -> str:
+        return f"{self._directory(data_type, date_suffix)}/part-{uuid.uuid4().hex}.{extension}"
 
 
 class CsvWriter(BaseWriter):
-    """Append-friendly CSV writer.
-
-    Each call appends to the target file (creating it with a header row on
-    first write). Thread-safe at the file level via the sink's atomic open.
-
-    Appending works correctly even on backends with no real append
-    primitive (e.g. GCS -- see ``Sink.write_or_append``): the writer only
-    decides whether to emit a header row, and delegates the actual
-    append-or-fallback logic to the sink.
-    """
+    """CSV writer. Each call writes one new, independent part file with its
+    own header row -- readers concatenating multiple parts read each with
+    its own header, the same way Spark/Hive CSV part-files work."""
 
     def write(
         self,
@@ -164,8 +176,7 @@ class CsvWriter(BaseWriter):
         if not records:
             return
 
-        path = self._path(data_type, date_suffix, "csv")
-        file_exists = sink.exists(path)
+        path = self._part_path(data_type, date_suffix, "csv")
 
         buf = io.StringIO()
         writer = csv.DictWriter(
@@ -174,24 +185,20 @@ class CsvWriter(BaseWriter):
             quoting=csv.QUOTE_MINIMAL,
             extrasaction="ignore",
         )
-        if not file_exists:
-            writer.writeheader()
+        writer.writeheader()
         writer.writerows(records)
 
-        sink.write_or_append(path, buf.getvalue().encode("utf-8"), file_exists)
+        with sink.open(path, "wb") as f:
+            f.write(buf.getvalue().encode("utf-8"))
 
         logger.info("CSV: wrote %d rows -> %s", len(records), sink.full_path(path))
 
 
 class ParquetWriter(BaseWriter):
-    """Parquet writer using PyArrow with Snappy compression.
-
-    Each call overwrites the target file, so callers must pass every record
-    for a given ``(data_type, date_suffix)`` in a single ``write()`` call
-    (the CLI accumulates records in memory across the run for this reason).
-    For genuinely incremental/partitioned output, use distinct ``date_suffix``
-    values or add a partition column instead.
-    """
+    """Parquet writer using PyArrow with Snappy compression. Each call
+    writes one new, independent part file -- a fresh, self-contained
+    schema and footer every time, so a part is either fully valid the
+    moment ``write()`` returns or doesn't exist at all."""
 
     def write(
         self,
@@ -203,7 +210,7 @@ class ParquetWriter(BaseWriter):
         if not records:
             return
 
-        path = self._path(data_type, date_suffix, "parquet")
+        path = self._part_path(data_type, date_suffix, "parquet")
 
         df = pd.DataFrame(records)
         table = pa.Table.from_pandas(df, preserve_index=False)
@@ -221,7 +228,8 @@ class ParquetWriter(BaseWriter):
 
 
 class JsonLinesWriter(BaseWriter):
-    """JSON Lines (NDJSON) writer. One JSON object per line, UTF-8 encoded."""
+    """JSON Lines (NDJSON) writer. Each call writes one new, independent
+    part file; NDJSON has no header, so parts concatenate trivially."""
 
     def write(
         self,
@@ -233,12 +241,12 @@ class JsonLinesWriter(BaseWriter):
         if not records:
             return
 
-        path = self._path(data_type, date_suffix, "jsonl")
-        file_exists = sink.exists(path)
+        path = self._part_path(data_type, date_suffix, "jsonl")
 
         lines = "\n".join(json.dumps(r, default=str) for r in records) + "\n"
 
-        sink.write_or_append(path, lines.encode("utf-8"), file_exists)
+        with sink.open(path, "wb") as f:
+            f.write(lines.encode("utf-8"))
 
         logger.info("JSONL: wrote %d rows -> %s", len(records), sink.full_path(path))
 
@@ -255,3 +263,73 @@ def create_writer(output_format: OutputFormat) -> BaseWriter:
             f"Unsupported output format: {output_format!r}. Choose from {list(writers)}"
         )
     return writers[output_format]()
+
+
+class BatchWriter:
+    """Buffers records per data type across many small yields (e.g. from
+    ``processor.stream_all``, where "projects" and "boards" each yield
+    exactly one record at a time) and flushes to a new part file once a
+    data type's buffer reaches ``max_records``, so output isn't one tiny
+    part per yield.
+
+    A crash between flushes loses at most one data type's current,
+    below-threshold buffer -- everything already flushed is on disk as
+    valid, independent part files.
+
+    Usage::
+
+        bw = BatchWriter(writer, sink, date_suffix, max_records=10_000)
+        bw.clear_previous(settings.data_types)  # replace-on-rerun
+        async for data_type, records in stream_all(...):
+            bw.add(data_type, records)
+        bw.flush_all()  # any remainder below threshold
+    """
+
+    def __init__(
+        self,
+        writer: BaseWriter,
+        sink: Sink,
+        date_suffix: str,
+        max_records: int,
+    ) -> None:
+        self._writer = writer
+        self._sink = sink
+        self._date_suffix = date_suffix
+        self._max_records = max_records
+        self._buffers: dict[str, list[dict[str, Any]]] = {}
+
+    def clear_previous(self, data_types: list[str]) -> None:
+        """Delete any existing parts for each enabled data type's
+        ``{date_suffix}`` directory before writing new ones.
+
+        Re-running with the same ``date_suffix`` replaces that run's output
+        rather than accumulating a union of multiple attempts -- matching
+        the sink-agnostic writers' previous single-file-overwrite semantics
+        (Parquet), rather than their previous single-file-append semantics
+        (CSV/JSONL). Accepted tradeoff: a re-run that crashes partway
+        through leaves only the new, incomplete parts -- the previous
+        completed run's data for that data type is already gone by the
+        time new parts start landing.
+        """
+        for data_type in data_types:
+            directory = self._writer._directory(data_type, self._date_suffix)
+            self._sink.clear_directory(directory)
+
+    def add(self, data_type: str, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        buffer = self._buffers.setdefault(data_type, [])
+        buffer.extend(records)
+        if len(buffer) >= self._max_records:
+            self._flush(data_type)
+
+    def flush_all(self) -> None:
+        for data_type in list(self._buffers):
+            self._flush(data_type)
+
+    def _flush(self, data_type: str) -> None:
+        buffer = self._buffers.get(data_type)
+        if not buffer:
+            return
+        self._writer.write(data_type, buffer, self._sink, self._date_suffix)
+        self._buffers[data_type] = []
