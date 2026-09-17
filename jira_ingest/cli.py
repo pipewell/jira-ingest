@@ -140,7 +140,7 @@ def _load_database(
     # Redshift + S3 sink: use the fast COPY path instead of row-by-row insert
     if isinstance(loader, RedshiftLoader) and settings.sink_uri.startswith("s3://"):
         click.echo("Redshift detected with S3 sink -- using COPY fast path")
-        loader.load_all_from_s3(settings.sink_uri, date_suffix)
+        loader.load_all_from_s3(settings.sink_uri, date_suffix, settings.data_types)
     else:
         db_counts = loader.load_all(records)
         for table, n in db_counts.items():

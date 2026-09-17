@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import types
+from collections.abc import Iterable
 from typing import Any
 
 import fsspec
@@ -149,8 +150,10 @@ class RedshiftLoader(SQLAlchemyLoader):
             logger.info("COPY %s <- %s", qualified, s3_prefix)
             conn.execute(sql, {"s3_prefix": s3_prefix, "iam_role": self._iam_role})
 
-    def load_all_from_s3(self, s3_sink_uri: str, date_suffix: str) -> None:
-        """COPY all data types from an S3 sink for a given date suffix.
+    def load_all_from_s3(
+        self, s3_sink_uri: str, date_suffix: str, data_types: Iterable[str] | None = None
+    ) -> None:
+        """COPY the given data types from an S3 sink for a given date suffix.
 
         ``ParquetWriter`` writes each data type as a directory of one or
         more part files (``{data_type}/{data_type}_{date_suffix}/part-*.parquet``),
@@ -158,11 +161,21 @@ class RedshiftLoader(SQLAlchemyLoader):
         under a prefix in parallel, so the directory itself is the prefix
         passed to ``load_from_s3``.
 
+        ``data_types`` defaults to every known type, but callers scoping a
+        run to a subset (``JIRA_DATA_TYPES``) must pass that subset here too.
+        ``BatchWriter.clear_previous`` (see ``jira_ingest.output.writer``)
+        only clears the directories for a run's enabled data types, so a
+        restricted run leaves any other data type's directory from an
+        earlier, broader run untouched on S3 -- without this filter, this
+        method would still find and COPY that stale, out-of-scope data.
+
         Data types that produced zero records never get any part file
         written, so those are skipped here rather than issuing a COPY
         against an empty prefix (which would fail and abort the whole load).
         """
-        for data_type in TABLE_NAMES:
+        if data_types is None:
+            data_types = TABLE_NAMES
+        for data_type in data_types:
             prefix = f"{s3_sink_uri.rstrip('/')}/{data_type}/{data_type}_{date_suffix}/"
             fs, _ = fsspec.core.url_to_fs(prefix)
             if not fs.find(prefix):

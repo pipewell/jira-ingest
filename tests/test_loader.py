@@ -421,3 +421,41 @@ def test_load_all_from_s3_calls_nothing_when_no_files_exist(tmp_path: Path) -> N
         ldr.load_all_from_s3(str(tmp_path), "20240601")
 
     mock_load_from_s3.assert_not_called()
+
+
+def test_load_all_from_s3_ignores_stale_data_types_outside_requested_scope(
+    tmp_path: Path,
+) -> None:
+    """A restricted run (JIRA_DATA_TYPES=projects) only clears and rewrites
+    that data type's directory (see BatchWriter.clear_previous); a prior
+    broader run can leave other data types' directories -- e.g. issues/ --
+    populated under the same date_suffix. Without an explicit data_types
+    filter, load_all_from_s3 would still find and COPY that stale,
+    out-of-scope data alongside the current run's real output."""
+    for data_type in ("projects", "issues", "boards"):
+        directory = tmp_path / data_type / f"{data_type}_20240601"
+        directory.mkdir(parents=True)
+        (directory / "part-abc123.parquet").write_bytes(b"fake-parquet")
+
+    ldr = _redshift_loader()
+    with patch.object(ldr, "load_from_s3") as mock_load_from_s3:
+        ldr.load_all_from_s3(str(tmp_path), "20240601", data_types=["projects"])
+
+    called_types = {call.args[0] for call in mock_load_from_s3.call_args_list}
+    assert called_types == {"projects"}
+
+
+def test_load_all_from_s3_defaults_to_every_known_data_type(tmp_path: Path) -> None:
+    """No data_types argument -- e.g. called directly, not through the CLI's
+    scoped run -- keeps the original behaviour of scanning every type."""
+    for data_type in ("projects", "issues"):
+        directory = tmp_path / data_type / f"{data_type}_20240601"
+        directory.mkdir(parents=True)
+        (directory / "part-abc123.parquet").write_bytes(b"fake-parquet")
+
+    ldr = _redshift_loader()
+    with patch.object(ldr, "load_from_s3") as mock_load_from_s3:
+        ldr.load_all_from_s3(str(tmp_path), "20240601")
+
+    called_types = {call.args[0] for call in mock_load_from_s3.call_args_list}
+    assert called_types == {"projects", "issues"}
