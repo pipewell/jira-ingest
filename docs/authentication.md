@@ -32,6 +32,36 @@ Verify connectivity:
 jira-ingest validate
 ```
 
+### Fine-grained/scoped API tokens
+
+Some Atlassian orgs issue fine-grained (scoped) API tokens instead of classic
+unrestricted ones -- or block classic tokens entirely via an org-wide policy. Scoped
+tokens are rejected with a `401 Unauthorized` when called against your site's direct
+domain (`https://your-org.atlassian.net/...`); they only work routed through
+Atlassian's API gateway by tenant ID instead of domain name.
+
+If `jira-ingest run` or `validate` fails with a 401 despite correct credentials and
+project permissions, set `JIRA_CLOUD_ID` to your site's cloud ID:
+
+```bash
+curl -s https://your-org.atlassian.net/_edge/tenant_info
+```
+
+This is an unauthenticated endpoint; the response is `{"cloudId": "..."}`. Once set,
+all Cloud API calls route through `https://api.atlassian.com/ex/jira/{cloudId}/...`
+instead of the direct domain:
+
+```dotenv
+JIRA_MODE=cloud
+JIRA_URL=https://myorg.atlassian.net
+JIRA_API_TOKEN=ATATT3xFfGF0...
+JIRA_EMAIL=you@example.com
+JIRA_CLOUD_ID=d14306f1-5802-4283-834c-8a799a89321a
+```
+
+`jira-ingest validate` echoes an extra "Routing via Cloud gateway" line when this is
+active, so you can confirm which URL requests are actually going to.
+
 ---
 
 ## Jira Data Center (Server)

@@ -39,7 +39,7 @@ pip install "pipewell-jira-ingest[redshift]"   # Redshift with S3 COPY fast path
 
 | Guide | Description |
 |---|---|
-| [Authentication](https://github.com/pipewell/jira-ingest/blob/main/docs/authentication.md) | Jira Cloud vs Data Center, PAT vs Basic Auth, mTLS certificates, scoping by project |
+| [Authentication](https://github.com/pipewell/jira-ingest/blob/main/docs/authentication.md) | Jira Cloud vs Data Center, PAT vs Basic Auth, mTLS certificates, scoped API tokens, scoping by project |
 | [Output sinks](https://github.com/pipewell/jira-ingest/blob/main/docs/sinks.md) | Local filesystem, S3, Azure Blob, GCS -- URIs, auth options, output layout |
 | [Database loading](https://github.com/pipewell/jira-ingest/blob/main/docs/database-loading.md) | PostgreSQL, Redshift S3 COPY, Snowflake, DuckDB, SQLite; programmatic API |
 | [Custom fields](https://github.com/pipewell/jira-ingest/blob/main/docs/custom-fields.md) | Mapping `customfield_XXXXX` IDs to logical names, finding field IDs |
@@ -55,6 +55,7 @@ All settings are read from environment variables (or a `.env` file) with the pre
 | `JIRA_API_TOKEN` | required | API token (Cloud) or PAT (DC) |
 | `JIRA_EMAIL` | required for Cloud | Account email |
 | `JIRA_CERT_PEM` | | Base64-encoded PEM for mTLS (DC only) |
+| `JIRA_CLOUD_ID` | | Routes Cloud requests through Atlassian's API gateway; required for fine-grained/scoped API tokens (Cloud only) |
 | `JIRA_PROJECT_KEYS` | all projects | Comma-separated project keys to scope the run |
 | `JIRA_OUTPUT_FORMAT` | `parquet` | `parquet`, `csv`, or `jsonl` |
 | `JIRA_SINK_URI` | `./output` | fsspec URI for output destination |
