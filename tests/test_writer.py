@@ -357,3 +357,23 @@ class TestBatchWriter:
         bw.flush_all()
 
         assert _parts(tmp_path, "issues", "20240601", "csv") == []
+
+    def test_a_single_oversized_batch_is_chunked_not_written_as_one_part(
+        self, tmp_path: Path
+    ) -> None:
+        """A single yielded batch larger than max_records (e.g. one board's
+        full page of issues) must not land as one oversized part -- that
+        would make JIRA_PART_FILE_MAX_RECORDS a misleading name, since it's
+        documented as a cap on part size, not just a flush trigger."""
+        writer = CsvWriter()
+        sink = Sink(str(tmp_path))
+        bw = BatchWriter(writer, sink, "20240601", max_records=10)
+
+        big_batch = [{"id": i, "key": f"PROJ-{i}"} for i in range(25)]
+        bw.add("issues", big_batch)  # single add() call, no threshold crossing in between
+
+        parts = _parts(tmp_path, "issues", "20240601", "csv")
+        assert len(parts) == 3  # 10 + 10 + 5
+        row_counts = sorted(len(_read_all_csv_rows([p])) for p in parts)
+        assert row_counts == [5, 10, 10]
+        assert sum(row_counts) == 25

@@ -7,7 +7,7 @@ import os
 import tempfile
 from typing import Any, Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Data types the processor can emit. Keep in sync with the dtype strings
@@ -66,7 +66,13 @@ class Settings(BaseSettings):
     # a time, so flushing on every yield would produce mostly one-row part
     # files; buffering up to this many records first keeps parts a
     # reasonable size. See jira_ingest.output.writer.BatchWriter.
-    part_file_max_records: int = 10_000
+    #
+    # Must be positive: BatchWriter._flush() chunks via utils.batched(buffer,
+    # n), and batched() silently returns zero chunks for a negative n (an
+    # empty range()), which would clear the buffer and produce no output
+    # file at all -- not even an error. n=0 does raise, but only as an
+    # unhelpful ValueError deep in range(), not a clear startup-time error.
+    part_file_max_records: int = Field(default=10_000, gt=0)
 
     # ── Tuning ─────────────────────────────────────────────────────────────────
     max_concurrent_requests: int = 10

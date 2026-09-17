@@ -90,6 +90,32 @@ class TestEffectiveBaseUrl:
         assert s.effective_base_url() == "https://jira.internal.com"
 
 
+class TestPartFileMaxRecords:
+    """utils.batched(buffer, n) silently returns zero chunks for a negative
+    n (an empty range()), which BatchWriter._flush() would then treat as
+    "nothing to write" while still clearing the buffer -- a negative
+    JIRA_PART_FILE_MAX_RECORDS would discard every record with no file
+    written and no error at all. n=0 does raise, but only as an unhelpful
+    ValueError deep inside range(), not a clear startup-time error. Both
+    must be rejected at config-validation time instead."""
+
+    def test_defaults_to_ten_thousand(self) -> None:
+        s = make_settings()
+        assert s.part_file_max_records == 10_000
+
+    def test_negative_value_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="part_file_max_records"):
+            make_settings(part_file_max_records=-1)
+
+    def test_zero_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="part_file_max_records"):
+            make_settings(part_file_max_records=0)
+
+    def test_positive_value_is_accepted(self) -> None:
+        s = make_settings(part_file_max_records=500)
+        assert s.part_file_max_records == 500
+
+
 class TestProjectKeys:
     def test_comma_separated_string(self) -> None:
         s = make_settings(project_keys="PROJ,INFRA, PLATFORM")

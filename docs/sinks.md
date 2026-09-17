@@ -52,11 +52,11 @@ behaves in Spark, and is still a net improvement over having no
 crash-resilience within a run at all.
 
 Each data type's part-file size is capped by `JIRA_PART_FILE_MAX_RECORDS`
-(default `10000`): records are buffered per data type as they're fetched
-and flushed to a new part once the buffer reaches that many rows, plus a
-final flush of whatever's left when the run finishes. Lower it for smaller,
-more numerous parts (finer-grained crash recovery, more per-file overhead)
-or raise it for fewer, larger parts.
+(default `10000`, must be a positive integer): records are buffered per
+data type as they're fetched and flushed to one or more parts of at most
+this many rows each, plus a final flush of whatever's left when the run
+finishes. Lower it for smaller, more numerous parts (finer-grained crash
+recovery, more per-file overhead) or raise it for fewer, larger parts.
 
 ## Output formats
 

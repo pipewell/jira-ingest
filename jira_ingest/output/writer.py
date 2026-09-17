@@ -52,6 +52,7 @@ from jira_ingest.schemas import (
     ReleaseRecord,
     TransitionRecord,
 )
+from jira_ingest.utils import batched
 
 logger = logging.getLogger(__name__)
 
@@ -268,9 +269,10 @@ def create_writer(output_format: OutputFormat) -> BaseWriter:
 class BatchWriter:
     """Buffers records per data type across many small yields (e.g. from
     ``processor.stream_all``, where "projects" and "boards" each yield
-    exactly one record at a time) and flushes to a new part file once a
-    data type's buffer reaches ``max_records``, so output isn't one tiny
-    part per yield.
+    exactly one record at a time) and flushes to one or more part files of
+    at most ``max_records`` each once a data type's buffer reaches that
+    threshold, so output is neither one tiny part per yield nor one
+    unbounded part regardless of how large a single incoming batch is.
 
     A crash between flushes loses at most one data type's current,
     below-threshold buffer -- everything already flushed is on disk as
@@ -328,8 +330,19 @@ class BatchWriter:
             self._flush(data_type)
 
     def _flush(self, data_type: str) -> None:
+        """Write the buffer as one or more parts of at most ``max_records``
+        each, not one part however large the buffer has grown.
+
+        ``add()`` only triggers a flush once the buffer *reaches*
+        ``max_records``, but a single incoming batch can itself be larger
+        than that (e.g. one board's full page of issues) -- in that case
+        the buffer jumps straight past the threshold in one ``add()`` call,
+        and this method has to split it rather than writing it as a single
+        oversized part.
+        """
         buffer = self._buffers.get(data_type)
         if not buffer:
             return
-        self._writer.write(data_type, buffer, self._sink, self._date_suffix)
+        for chunk in batched(buffer, self._max_records):
+            self._writer.write(data_type, chunk, self._sink, self._date_suffix)
         self._buffers[data_type] = []

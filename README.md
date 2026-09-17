@@ -60,7 +60,7 @@ All settings are read from environment variables (or a `.env` file) with the pre
 | `JIRA_OUTPUT_FORMAT` | `parquet` | `parquet`, `csv`, or `jsonl` |
 | `JIRA_SINK_URI` | `./output` | fsspec URI for output destination |
 | `JIRA_SINK_OPTIONS` | `{}` | JSON dict of auth options forwarded to fsspec |
-| `JIRA_PART_FILE_MAX_RECORDS` | `10000` | Row-count threshold per data type before flushing a new part file |
+| `JIRA_PART_FILE_MAX_RECORDS` | `10000` | Row-count threshold per data type before flushing a new part file (must be positive) |
 | `JIRA_CUSTOM_FIELDS` | `{}` | JSON dict mapping logical name to Jira field ID |
 | `JIRA_LOG_LEVEL` | `INFO` | Log verbosity |
 | `DATABASE_URL` | | SQLAlchemy URL to load into a database after writing |
