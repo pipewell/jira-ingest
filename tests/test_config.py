@@ -21,6 +21,20 @@ def make_settings(**overrides: object) -> Settings:
 
 
 class TestModeValidation:
+    def test_mode_is_required(self) -> None:
+        """An unconfigured mode must not silently resolve to one deployment
+        type or the other -- e.g. a DC user who forgets JIRA_MODE but still
+        has JIRA_EMAIL set (left over from a Cloud .env) would otherwise
+        pass validation and send Basic auth to a server expecting Bearer,
+        producing a confusing 401 that never points at MODE as the cause."""
+        with pytest.raises(ValidationError, match="mode"):
+            Settings.model_validate(
+                {
+                    "url": "https://jira.example.com",
+                    "api_token": "secret",
+                }
+            )
+
     def test_cloud_requires_email(self) -> None:
         with pytest.raises(ValidationError, match="JIRA_EMAIL"):
             Settings.model_validate(

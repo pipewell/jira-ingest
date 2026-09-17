@@ -1,6 +1,8 @@
 # Authentication
 
-jira-ingest supports two Jira deployment types. Set `JIRA_MODE` to select one.
+jira-ingest supports two Jira deployment types. `JIRA_MODE` is required -- it has
+no default, so an unconfigured deployment type fails fast with a clear error
+instead of silently guessing one.
 
 ---
 
@@ -12,7 +14,7 @@ Cloud uses HTTP Basic Auth: your account email plus an API token.
 
 | Variable | Description |
 |---|---|
-| `JIRA_MODE` | `cloud` (default) |
+| `JIRA_MODE` | `cloud` (required, no default) |
 | `JIRA_URL` | Your Cloud base URL, e.g. `https://myorg.atlassian.net` |
 | `JIRA_API_TOKEN` | API token from [id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens) |
 | `JIRA_EMAIL` | The email address tied to that token |
