@@ -115,6 +115,6 @@ Custom fields: {'story_points': 'customfield_10016', 'team': 'customfield_10001'
 To confirm a field is populated on real issues, run with a single project and inspect the output:
 
 ```bash
-JIRA_PROJECT_KEYS=PROJ jira-ingest run --output-format jsonl
-head -5 output/issues/issues_$(date +%Y%m%d).jsonl | jq '.custom_fields'
+JIRA_PROJECT_KEYS=PROJ JIRA_OUTPUT_FORMAT=jsonl jira-ingest run
+head -5 output/issues/issues_$(date +%Y%m%d)/part-*.jsonl | jq '.custom_fields'
 ```

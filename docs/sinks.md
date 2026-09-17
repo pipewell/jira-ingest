@@ -4,22 +4,59 @@ jira-ingest writes files via [fsspec](https://filesystem-spec.readthedocs.io), w
 
 ## Output layout
 
-Regardless of destination, files are written under a consistent directory tree:
+Regardless of destination, each data type is written as a **directory of
+part files**, not one single file -- the same pattern Spark/Hive use for
+exactly the same reason: every part is independently complete the moment
+it's written, so a crash partway through a run leaves everything already
+written valid and readable, rather than one held-open file that's unreadable
+garbage if the process dies before it's finished:
 
 ```
 {sink_uri}/
-  issues/issues_{date}.parquet
-  projects/projects_{date}.parquet
-  releases/releases_{date}.parquet
-  boards/boards_{date}.parquet
-  transitions/transitions_{date}.parquet
+  issues/issues_{date}/part-<uuid>.parquet
+             ...more parts as the run produces more batches...
+  projects/projects_{date}/part-<uuid>.parquet
+  releases/releases_{date}/part-<uuid>.csv
+  boards/boards_{date}/part-<uuid>.jsonl
+  transitions/transitions_{date}/part-<uuid>.parquet
 ```
+
+Reading a data type back means reading (or globbing) every part under its
+directory -- `pandas.read_parquet()`, `pyarrow.dataset`, and Redshift's
+`COPY ... FROM 's3://.../issues_{date}/'` all do this natively; no manual
+concatenation needed.
 
 `{date}` defaults to today (`YYYYMMDD`). Override with `--date-suffix`:
 
 ```bash
 jira-ingest run --date-suffix 20240601
 ```
+
+By default, running `jira-ingest run` again with the same `--date-suffix`
+**replaces** that date's output: existing parts for every enabled data type
+are deleted before any new ones are written, so a completed run's output is
+exactly and only that run -- not a union of several same-day attempts. Pass
+`--append` to skip that and let a new run's parts land alongside whatever's
+already there, if you deliberately want to split one day's ingest across
+multiple runs that should fold together:
+
+```bash
+jira-ingest run --append
+```
+
+Accepted tradeoff with the default (replace) behaviour: if a run crashes
+partway through, you're left with only the new run's incomplete parts --
+the previous, complete run's data for that date is already gone by the time
+new parts start landing. This mirrors how an "overwrite" partition write
+behaves in Spark, and is still a net improvement over having no
+crash-resilience within a run at all.
+
+Each data type's part-file size is capped by `JIRA_PART_FILE_MAX_RECORDS`
+(default `10000`): records are buffered per data type as they're fetched
+and flushed to a new part once the buffer reaches that many rows, plus a
+final flush of whatever's left when the run finishes. Lower it for smaller,
+more numerous parts (finer-grained crash recovery, more per-file overhead)
+or raise it for fewer, larger parts.
 
 ## Output formats
 
@@ -28,8 +65,8 @@ Set `JIRA_OUTPUT_FORMAT` to one of:
 | Value | Description |
 |---|---|
 | `parquet` | Snappy-compressed Parquet (default; best for analytics workloads) |
-| `csv` | Comma-separated; appends to existing file with header on first write |
-| `jsonl` | Newline-delimited JSON; appends to existing file |
+| `csv` | Comma-separated; each part file has its own header row |
+| `jsonl` | Newline-delimited JSON |
 
 ---
 

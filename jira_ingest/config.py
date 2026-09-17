@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     # Stored as a JSON string in env; parsed to dict at validation time.
     sink_options: dict[str, Any] = {}
 
+    # Row-count threshold per data type before flushing a new part file.
+    # `stream_all` yields some data types (projects, boards) one record at
+    # a time, so flushing on every yield would produce mostly one-row part
+    # files; buffering up to this many records first keeps parts a
+    # reasonable size. See jira_ingest.output.writer.BatchWriter.
+    part_file_max_records: int = 10_000
+
     # ── Tuning ─────────────────────────────────────────────────────────────────
     max_concurrent_requests: int = 10
     request_timeout_seconds: int = 120

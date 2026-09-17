@@ -395,10 +395,15 @@ def test_redshift_loader_prepare_batch_leaves_non_dict_values_untouched() -> Non
 
 def test_load_all_from_s3_skips_data_types_with_no_file(tmp_path: Path) -> None:
     """Regression test for #2: a COPY against a data type that produced zero
-    records (so ParquetWriter never wrote a file) must not crash the run."""
-    (tmp_path / "projects").mkdir()
-    (tmp_path / "projects" / "projects_20240601.parquet").write_bytes(b"fake-parquet")
-    # No file written for any other data type.
+    records (so ParquetWriter never wrote any part file) must not crash the
+    run. ParquetWriter writes a directory of part files per data type, not
+    a single file, so this covers that a part file existing anywhere under
+    the directory (not just an exact filename) is enough to trigger COPY."""
+    (tmp_path / "projects" / "projects_20240601").mkdir(parents=True)
+    (tmp_path / "projects" / "projects_20240601" / "part-abc123.parquet").write_bytes(
+        b"fake-parquet"
+    )
+    # No files written for any other data type.
 
     ldr = _redshift_loader()
     with patch.object(ldr, "load_from_s3") as mock_load_from_s3:
@@ -406,6 +411,8 @@ def test_load_all_from_s3_skips_data_types_with_no_file(tmp_path: Path) -> None:
 
     called_types = {call.args[0] for call in mock_load_from_s3.call_args_list}
     assert called_types == {"projects"}
+    called_prefix = mock_load_from_s3.call_args_list[0].args[1]
+    assert called_prefix.endswith("projects/projects_20240601/")
 
 
 def test_load_all_from_s3_calls_nothing_when_no_files_exist(tmp_path: Path) -> None:
