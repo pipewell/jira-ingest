@@ -166,6 +166,7 @@ def _settings(**overrides: object) -> Settings:
         {
             "url": "https://jira.example.com",
             "api_token": "tok",
+            "mode": "cloud",
             "email": "user@example.com",
             **overrides,
         }

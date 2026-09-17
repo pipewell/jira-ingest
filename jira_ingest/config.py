@@ -24,7 +24,12 @@ class Settings(BaseSettings):
     )
 
     # ── Mode ──────────────────────────────────────────────────────────────────
-    mode: Literal["dc", "cloud"] = "cloud"
+    # No default: an unconfigured mode must not silently resolve to one deployment
+    # type or the other. A DC user who forgets JIRA_MODE but happens to still have
+    # JIRA_EMAIL set (e.g. left over from a Cloud .env) would otherwise pass
+    # validation and send Basic auth to a server expecting Bearer, producing a
+    # confusing 401 that gives no hint MODE was the actual problem.
+    mode: Literal["dc", "cloud"]
 
     # ── Connection ─────────────────────────────────────────────────────────────
     url: str

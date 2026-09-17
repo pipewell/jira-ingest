@@ -50,7 +50,7 @@ All settings are read from environment variables (or a `.env` file) with the pre
 
 | Variable | Default | Description |
 |---|---|---|
-| `JIRA_MODE` | `cloud` | `cloud` or `dc` |
+| `JIRA_MODE` | required | `cloud` or `dc` |
 | `JIRA_URL` | required | Jira base URL |
 | `JIRA_API_TOKEN` | required | API token (Cloud) or PAT (DC) |
 | `JIRA_EMAIL` | required for Cloud | Account email |
