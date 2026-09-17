@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     email: str | None = None  # Cloud only
     cert_pem: str | None = None  # DC only: base64-encoded PEM
 
+    # Cloud only. Fine-grained/scoped Atlassian API tokens are rejected with a
+    # 401 against the direct tenant domain and must be routed through
+    # Atlassian's API gateway by cloud ID instead. Leave unset for classic,
+    # unrestricted tokens (the default). See docs/authentication.md.
+    cloud_id: str | None = None
+
     # ── Scope ──────────────────────────────────────────────────────────────────
     project_keys: list[str] = []
     data_types: list[str] = ["projects", "releases", "boards", "issues", "transitions"]
@@ -103,6 +109,18 @@ class Settings(BaseSettings):
         if self.mode == "cloud" and not self.email:
             raise ValueError("JIRA_EMAIL is required when JIRA_MODE=cloud")
         return self
+
+    # ── Effective base URL ────────────────────────────────────────────────────
+    def effective_base_url(self) -> str:
+        """The base URL requests actually go to.
+
+        Same as ``url`` unless ``cloud_id`` is set (Cloud only), in which
+        case requests route through Atlassian's API gateway instead of the
+        direct tenant domain -- required for fine-grained/scoped API tokens.
+        """
+        if self.mode == "cloud" and self.cloud_id:
+            return f"https://api.atlassian.com/ex/jira/{self.cloud_id}"
+        return self.url
 
     # ── PEM resolution ─────────────────────────────────────────────────────────
     def resolve_pem_path(self) -> str | None:

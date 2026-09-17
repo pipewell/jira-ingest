@@ -141,6 +141,9 @@ def validate(env_file: str) -> None:
     configure_logging("INFO")
     click.echo(f"Mode: {settings.mode}")
     click.echo(f"URL: {settings.url}")
+    effective_url = settings.effective_base_url()
+    if effective_url != settings.url:
+        click.echo(f"Routing via Cloud gateway (JIRA_CLOUD_ID set): {effective_url}")
     click.echo(f"Sink: {settings.sink_uri}  (format: {settings.output_format})")
     click.echo(f"Project keys: {settings.project_keys or '(all)'}")
     click.echo(f"Custom fields: {settings.custom_fields or '(none)'}")

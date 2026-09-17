@@ -46,6 +46,16 @@ class JiraClient:
     Jira Cloud (Basic Auth with email + API token). The mode is determined
     by ``settings.mode``.
 
+    If ``settings.cloud_id`` is set (Cloud only), requests are routed
+    through Atlassian's API gateway (``https://api.atlassian.com/ex/jira/
+    {cloud_id}``) instead of the direct tenant domain. Fine-grained/scoped
+    Atlassian API tokens are rejected with a 401 on the direct domain and
+    only work through the gateway; classic unrestricted tokens work either
+    way. Unlike Confluence's gateway form, Jira's is a verbatim passthrough
+    of everything after ``{cloud_id}`` -- no path segment needs dropping,
+    and this holds for ``/rest/api/2/``, ``/rest/api/3/``, and
+    ``/rest/agile/1.0/`` alike. See docs/authentication.md.
+
     Usage::
 
         async with JiraClient(settings) as client:
@@ -54,7 +64,7 @@ class JiraClient:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._base_url = settings.url
+        self._base_url = settings.effective_base_url()
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
         self._timeout = aiohttp.ClientTimeout(total=settings.request_timeout_seconds)
         self._cache: SimpleMemoryCache = SimpleMemoryCache()

@@ -51,6 +51,32 @@ class TestHeaders:
         assert headers["Authorization"] == "Bearer dctoken"
 
 
+class TestCloudGatewayRouting:
+    """Fine-grained/scoped Atlassian API tokens are rejected with a 401
+    against the direct tenant domain and must be routed through Atlassian's
+    API gateway by cloud ID instead (see docs/authentication.md)."""
+
+    def test_no_cloud_id_uses_direct_domain(self) -> None:
+        s = cloud_settings()
+        client = JiraClient(s)
+        assert client._base_url == "https://jira.example.com"
+
+    def test_cloud_id_routes_through_gateway(self) -> None:
+        s = cloud_settings(cloud_id="d14306f1-5802-4283-834c-8a799a89321a")
+        client = JiraClient(s)
+        assert (
+            client._base_url
+            == "https://api.atlassian.com/ex/jira/d14306f1-5802-4283-834c-8a799a89321a"
+        )
+
+    def test_cloud_id_ignored_in_dc_mode(self) -> None:
+        """cloud_id is a Cloud-only concept; DC has no gateway. Setting it
+        alongside mode=dc must not change DC's URL."""
+        s = dc_settings(cloud_id="d14306f1-5802-4283-834c-8a799a89321a")
+        client = JiraClient(s)
+        assert client._base_url == "https://jira.internal.com"
+
+
 class TestPagination:
     def _make_page(self, items: list, total: int, start_at: int = 0) -> dict:
         return {

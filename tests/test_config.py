@@ -47,6 +47,35 @@ class TestModeValidation:
         assert s.url == "https://jira.example.com"
 
 
+class TestEffectiveBaseUrl:
+    """cloud_id (JIRA_CLOUD_ID) routes Cloud requests through Atlassian's API
+    gateway instead of the direct tenant domain -- required for
+    fine-grained/scoped API tokens, which 401 on the direct domain
+    regardless of permissions. See docs/authentication.md."""
+
+    def test_defaults_to_direct_domain(self) -> None:
+        s = make_settings()
+        assert s.effective_base_url() == "https://jira.example.com"
+
+    def test_cloud_id_switches_to_gateway(self) -> None:
+        s = make_settings(cloud_id="d14306f1-5802-4283-834c-8a799a89321a")
+        assert (
+            s.effective_base_url()
+            == "https://api.atlassian.com/ex/jira/d14306f1-5802-4283-834c-8a799a89321a"
+        )
+
+    def test_cloud_id_has_no_effect_in_dc_mode(self) -> None:
+        s = Settings.model_validate(
+            {
+                "url": "https://jira.internal.com",
+                "api_token": "dctoken",
+                "mode": "dc",
+                "cloud_id": "d14306f1-5802-4283-834c-8a799a89321a",
+            }
+        )
+        assert s.effective_base_url() == "https://jira.internal.com"
+
+
 class TestProjectKeys:
     def test_comma_separated_string(self) -> None:
         s = make_settings(project_keys="PROJ,INFRA, PLATFORM")
